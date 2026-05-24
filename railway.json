@@ -5,8 +5,8 @@
   },
   "deploy": {
     "numReplicas": 1,
-    "restartPolicyType": "no",
-    "restartPolicyMaxRetries": 0
+    "restartPolicyType": "NEVER",
+    "restartPolicyMaxRetries": 1
   },
   "env": {
     "PYTHONUNBUFFERED": "1",
