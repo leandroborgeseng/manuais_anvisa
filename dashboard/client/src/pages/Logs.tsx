@@ -106,7 +106,7 @@ export default function LogsPage() {
             className={cn(
               "px-4 py-2 rounded-lg text-xs font-semibold transition-all",
               levelFilter === btn.key
-                ? "bg-gradient-to-r from-pink-600/80 to-violet-600/80 text-white shadow-lg"
+                ? "bg-gradient-to-r from-blue-600/80 to-indigo-600/80 text-white shadow-lg"
                 : "bg-white/5 text-white/50 hover:bg-white/10 hover:text-white/80"
             )}
           >

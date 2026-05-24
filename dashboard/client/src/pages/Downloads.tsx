@@ -107,8 +107,8 @@ function DownloadRow({ item }: { item: DownloadItem }) {
             disabled={retryMutation.isPending}
             className={cn(
               "shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold",
-              "bg-pink-500/20 text-pink-300 border border-pink-500/30",
-              "hover:bg-pink-500/30 hover:border-pink-400/50 transition-all",
+              "bg-blue-500/20 text-blue-300 border border-blue-500/30",
+              "hover:bg-blue-500/30 hover:border-blue-400/50 transition-all",
               "disabled:opacity-50 disabled:cursor-not-allowed"
             )}
           >
@@ -203,8 +203,8 @@ export default function Downloads() {
               onClick={() => setFilter(btn.key)}
               className={cn(
                 "px-3 py-1.5 rounded-lg text-xs font-semibold transition-all",
-                filter === btn.key
-                  ? "bg-gradient-to-r from-pink-600/80 to-violet-600/80 text-white shadow-lg"
+filter === btn.key
+                ? "bg-gradient-to-r from-blue-600/80 to-indigo-600/80 text-white shadow-lg"
                   : "bg-white/5 text-white/50 hover:bg-white/10 hover:text-white/80"
               )}
             >

@@ -94,7 +94,7 @@ export default function Dashboard() {
     {
       name: "Pendentes",
       value: Math.max(0, stats.totalFound - stats.totalCompleted - stats.totalErrors),
-      color: "oklch(0.25 0.05 270)",
+      color: "oklch(0.25 0.08 255)",
     },
   ].filter((d) => d.value > 0);
 
@@ -178,8 +178,8 @@ export default function Dashboard() {
               className="absolute inset-y-0 left-0 rounded-full transition-all duration-700 ease-out"
               style={{
                 width: `${stats.percentComplete}%`,
-                background: "linear-gradient(90deg, oklch(0.65 0.28 350), oklch(0.55 0.30 290))",
-                boxShadow: "0 0 20px oklch(0.65 0.28 350 / 0.6)",
+background: "linear-gradient(90deg, oklch(0.60 0.28 240), oklch(0.45 0.30 270))",
+                    boxShadow: "0 0 20px oklch(0.60 0.28 240 / 0.6)",
               }}
             />
             {isRunning && (
@@ -275,8 +275,8 @@ export default function Dashboard() {
             disabled={!isIdle || startMutation.isPending}
             className={cn(
               "flex items-center gap-2 px-6 py-3 rounded-xl font-semibold text-sm transition-all duration-200",
-              "bg-gradient-to-r from-pink-600 to-violet-600 text-white shadow-lg",
-              "hover:from-pink-500 hover:to-violet-500 hover:shadow-pink-500/30 hover:shadow-xl",
+"bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg",
+            "hover:from-blue-500 hover:to-indigo-500 hover:shadow-blue-500/30 hover:shadow-xl",
               "disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:shadow-none"
             )}
           >

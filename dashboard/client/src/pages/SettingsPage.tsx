@@ -129,7 +129,7 @@ export default function SettingsPage() {
                   className={cn(
                     "w-10 h-10 rounded-lg text-sm font-semibold transition-all",
                     maxWorkers === n
-                      ? "bg-gradient-to-br from-pink-600 to-violet-600 text-white shadow-lg"
+                      ? "bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-lg"
                       : "bg-white/5 text-white/50 hover:bg-white/10"
                   )}
                 >
@@ -186,7 +186,7 @@ export default function SettingsPage() {
                 className={cn(
                   "px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
                   cronExpression === preset.value
-                    ? "bg-violet-500/30 text-violet-300 border border-violet-500/40"
+                    ? "bg-blue-500/30 text-blue-300 border border-blue-500/40"
                     : "bg-white/5 text-white/40 hover:bg-white/10 hover:text-white/70"
                 )}
               >
@@ -213,8 +213,8 @@ export default function SettingsPage() {
           disabled={updateMutation.isPending}
           className={cn(
             "flex items-center gap-2 px-8 py-3 rounded-xl font-semibold text-sm transition-all duration-200",
-            "bg-gradient-to-r from-pink-600 to-violet-600 text-white shadow-lg",
-            "hover:from-pink-500 hover:to-violet-500 hover:shadow-pink-500/30 hover:shadow-xl",
+            "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg",
+            "hover:from-blue-500 hover:to-indigo-500 hover:shadow-blue-500/30 hover:shadow-xl",
             "disabled:opacity-50 disabled:cursor-not-allowed"
           )}
         >
