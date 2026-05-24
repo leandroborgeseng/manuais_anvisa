@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1779651704186,
+      "tag": "0000_handy_blue_shield",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1779651826277,
+      "tag": "0001_broad_warhawk",
+      "breakpoints": true
+    }
+  ]
+}
