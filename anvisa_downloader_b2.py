@@ -37,7 +37,7 @@ import re
 from pathlib import Path
 from datetime import datetime
 from urllib.parse import urljoin, quote, urlparse
-from typing import List, Dict, Optional, Set
+from typing import List, Dict, Optional, Set, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import tempfile
 
@@ -233,10 +233,12 @@ class AnvisaB2Downloader:
         session.mount("https://", adapter)
         
         session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
             'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
             'Accept-Encoding': 'gzip, deflate',
+            'Authorization': 'Guest',
+            'Referer': 'https://consultas.anvisa.gov.br/',
             'DNT': '1',
             'Connection': 'keep-alive',
         })
@@ -274,69 +276,160 @@ class AnvisaB2Downloader:
     
     def search_anvisa_pdfs(self, max_results: int = 100) -> List[str]:
         """
-        Busca PDFs da ANVISA.
-        
-        Args:
-            max_results: Número máximo de resultados
-            
-        Returns:
-            Lista de URLs
+        Busca PDFs de manuais via API oficial da ANVISA (consultas.anvisa.gov.br).
+
+        A busca por DuckDuckGo/Google falha em datacenters (Railway); a API
+        funciona com Authorization: Guest.
         """
-        urls = []
-        
-        search_queries = [
-            "site:consultas.anvisa.gov.br filetype:pdf manual",
-            "site:consultas.anvisa.gov.br filetype:pdf instrução",
-            "site:consultas.anvisa.gov.br filetype:pdf equipamento",
-            "site:consultas.anvisa.gov.br/api/consulta/produtos filetype:pdf",
+        urls: List[str] = []
+        seen: Set[str] = set()
+
+        default_terms = [
+            "cateter", "bomba", "monitor", "seringa", "ventilador",
+            "oximetro", "sonda", "equipo", "desfibrilador", "marcapasso",
+            "luva", "agulha", "stent", "prótese", "implante",
         ]
-        
-        logger.info("Iniciando busca de PDFs da ANVISA...")
-        
-        for query in search_queries:
+        env_terms = os.getenv("ANVISA_SEARCH_TERMS", "")
+        search_terms = [t.strip() for t in env_terms.split(",") if t.strip()] or default_terms
+
+        logger.info("Buscando manuais via API oficial da ANVISA...")
+        page_size = int(os.getenv("ANVISA_PAGE_SIZE", "20"))
+
+        for term in search_terms:
             if len(urls) >= max_results:
                 break
-            
-            try:
-                urls_found = self._search_duckduckgo(query, max_results // len(search_queries))
-                urls.extend(urls_found)
-                
-                time.sleep(2)
-                
-            except Exception as e:
-                logger.warning(f"Erro ao buscar '{query}': {e}")
-                continue
-        
-        urls = list(set(urls))
+
+            page = 0
+            while len(urls) < max_results:
+                products, is_last = self._search_anvisa_products(term, page, page_size)
+                if not products:
+                    break
+
+                for product in products:
+                    processo = product.get("processo")
+                    if not processo:
+                        continue
+
+                    for pdf_url in self._get_product_pdf_urls(processo, term):
+                        if pdf_url not in seen:
+                            seen.add(pdf_url)
+                            urls.append(pdf_url)
+                            logger.info(f"Manual encontrado: {product.get('produto', processo)} -> {pdf_url}")
+                            if len(urls) >= max_results:
+                                break
+
+                    if len(urls) >= max_results:
+                        break
+
+                if is_last:
+                    break
+
+                page += 1
+                time.sleep(0.3)
+
+            time.sleep(0.5)
+
         logger.info(f"Total de URLs encontradas: {len(urls)}")
+        print(f"TOTAL_FOUND:{len(urls)}", flush=True)
         return urls[:max_results]
-    
-    def _search_duckduckgo(self, query: str, max_results: int = 20) -> List[str]:
-        """Busca no DuckDuckGo."""
-        urls = []
-        
+
+    def _search_anvisa_products(
+        self, nome_produto: str, pagina: int = 0, tamanho: int = 20
+    ) -> Tuple[List[Dict], bool]:
+        """Lista produtos para saúde na API da ANVISA."""
+        api_url = "https://consultas.anvisa.gov.br/api/consulta/saude"
+        params = {
+            "pagina": pagina,
+            "tamanho": tamanho,
+            "nomeProduto": nome_produto,
+        }
+
         try:
-            search_url = "https://duckduckgo.com/html"
-            params = {'q': query, 'kl': 'br-pt'}
-            
-            response = self.session.get(search_url, params=params, timeout=10)
+            response = self.session.get(api_url, params=params, timeout=30)
             response.raise_for_status()
-            
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            for link in soup.find_all('a', {'class': 'result__url'}):
-                href = link.get('href', '')
-                
-                if 'consultas.anvisa.gov.br' in href and '.pdf' in href.lower():
-                    if href.startswith('http'):
+            data = response.json()
+            content = data.get("content", [])
+            is_last = data.get("last", True)
+            total = data.get("totalElements", "?")
+            logger.info(
+                f"API ANVISA [{nome_produto} pág {pagina}]: "
+                f"{len(content)} produtos (total catálogo: {total})"
+            )
+            return content, is_last
+        except Exception as e:
+            logger.warning(f"Erro na API ANVISA para '{nome_produto}' pág {pagina}: {e}")
+            return [], True
+
+    def _get_product_pdf_urls(self, processo: str, nome_produto: str) -> List[str]:
+        """Obtém URLs de download de PDFs (manuais) de um produto."""
+        api_url = f"https://consultas.anvisa.gov.br/api/consulta/saude/{processo}"
+        params = {"nomeProduto": nome_produto}
+        urls: List[str] = []
+
+        try:
+            response = self.session.get(api_url, params=params, timeout=30)
+            if response.status_code != 200:
+                return urls
+
+            arquivos = response.json().get("arquivos", [])
+            for arq in arquivos:
+                if arq.get("tipoArquivo", "").upper() != "PDF":
+                    continue
+
+                anexo_cod = arq.get("anexoCod")
+                nome = arq.get("nomeCompleto") or arq.get("nomeArquivo")
+                if not anexo_cod or not nome:
+                    continue
+
+                download_url = (
+                    "https://consultas.anvisa.gov.br/api/consulta/produtos/"
+                    f"{processo}/anexo/{anexo_cod}/nomeArquivo/{quote(nome, safe='')}?Authorization="
+                )
+                urls.append(download_url)
+
+        except Exception as e:
+            logger.debug(f"Erro ao obter anexos do processo {processo}: {e}")
+
+        return urls
+
+    def _search_duckduckgo(self, query: str, max_results: int = 20) -> List[str]:
+        """Fallback: busca no DuckDuckGo (pode falhar em datacenters)."""
+        urls = []
+
+        try:
+            search_url = "https://html.duckduckgo.com/html"
+            response = self.session.post(
+                search_url,
+                data={"q": query, "kl": "br-pt"},
+                timeout=15,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            response.raise_for_status()
+
+            soup = BeautifulSoup(response.text, "html.parser")
+
+            for link in soup.find_all("a", href=True):
+                href = link["href"]
+                if "uddg=" in href:
+                    match = re.search(r"uddg=([^&]+)", href)
+                    if match:
+                        href = requests.utils.unquote(match.group(1))
+                if "consultas.anvisa.gov.br" in href and ".pdf" in href.lower():
+                    if href.startswith("http"):
                         urls.append(href)
-            
-            logger.info(f"DuckDuckGo: {len(urls)} URLs encontradas")
-            
+
+            for link in soup.find_all("a", class_="result__url"):
+                href = link.get("href", "")
+                if "consultas.anvisa.gov.br" in href and ".pdf" in href.lower():
+                    if href.startswith("http"):
+                        urls.append(href)
+
+            logger.info(f"DuckDuckGo (fallback): {len(urls)} URLs encontradas")
+
         except Exception as e:
             logger.warning(f"Erro ao buscar no DuckDuckGo: {e}")
-        
-        return urls
+
+        return urls[:max_results]
     
     def download_and_upload_file(self, url: str) -> bool:
         """
@@ -356,29 +449,33 @@ class AnvisaB2Downloader:
                 return True
             
             logger.info(f"Processando: {url}")
-            
+
+            # Extrair nome do arquivo da URL antes do download
+            parsed_url = urlparse(url)
+            filename = os.path.basename(parsed_url.path)
+            if not filename or not filename.lower().endswith(".pdf"):
+                filename = f"manual_{int(time.time())}.pdf"
+            filename = self._sanitize_filename(filename)
+            print(f"DOWNLOAD_START:{filename}:{url}", flush=True)
+
             # Download para arquivo temporário
             response = self.session.get(url, timeout=60, stream=True, allow_redirects=True)
             response.raise_for_status()
-            
-            # Validar PDF
-            if not response.content.startswith(b'%PDF'):
+
+            # Validar PDF — peek first chunk
+            first_chunk = b""
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    first_chunk = chunk
+                    break
+            if not first_chunk.startswith(b"%PDF"):
                 logger.warning(f"Arquivo não é um PDF válido: {url}")
+                print(f"ERROR:{filename}:Arquivo não é PDF válido", flush=True)
                 return False
-            
-            # Extrair nome do arquivo
-            parsed_url = urlparse(url)
-            filename = os.path.basename(parsed_url.path)
-            
-            if not filename or not filename.lower().endswith('.pdf'):
-                filename = f"manual_{int(time.time())}.pdf"
-            
-            filename = self._sanitize_filename(filename)
-            
-            # Salvar temporariamente
+
             temp_file = self.output_dir / filename
-            
-            with open(temp_file, 'wb') as f:
+            with open(temp_file, "wb") as f:
+                f.write(first_chunk)
                 for chunk in response.iter_content(chunk_size=8192):
                     if chunk:
                         f.write(chunk)
@@ -388,9 +485,9 @@ class AnvisaB2Downloader:
             
             # Upload para B2 se configurado
             if self.b2_manager:
-                # Organizar por data
                 date_prefix = datetime.now().strftime('%Y/%m/%d')
                 b2_path = f"manuais/{date_prefix}/{filename}"
+                print(f"UPLOAD_B2:{filename}", flush=True)
                 
                 metadata = {
                     'original_url': url,
@@ -401,6 +498,7 @@ class AnvisaB2Downloader:
                     self.progress["uploaded_files"] += 1
                     self.progress["uploaded_b2_files"].append(b2_path)
                     logger.info(f"Upload B2 concluído: {b2_path}")
+                    print(f"COMPLETED:{filename}:{b2_path}", flush=True)
                 else:
                     logger.error(f"Falha ao fazer upload para B2: {b2_path}")
                     return False
@@ -408,6 +506,8 @@ class AnvisaB2Downloader:
             self.downloaded_urls.add(url)
             self.progress["downloaded_files"] += 1
             self._save_progress()
+            if not self.b2_manager:
+                print(f"COMPLETED:{filename}:local", flush=True)
             
             return True
             
