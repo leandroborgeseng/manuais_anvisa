@@ -90,6 +90,14 @@ class ProcessManager extends EventEmitter {
       return { success: false, message: "Processo já está em execução." };
     }
 
+    const { catalogManager } = await import("./catalogManager");
+    if (catalogManager.getStatus() === "running") {
+      return {
+        success: false,
+        message: "Pare a sincronização do catálogo antes de iniciar downloads.",
+      };
+    }
+
     const cfg = await getSettings();
     const maxFiles = cfg?.maxFiles ?? 100;
     const maxWorkers = cfg?.maxWorkers ?? 4;

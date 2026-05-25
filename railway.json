@@ -8,6 +8,7 @@
       "railway.json",
       "requirements.txt",
       "anvisa_*.py",
+      "anvisa_catalog_sync.py",
       "scripts/**",
       "dashboard/**"
     ]

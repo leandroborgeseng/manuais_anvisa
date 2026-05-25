@@ -10,6 +10,7 @@ import Dashboard from "./pages/Dashboard";
 import Downloads from "./pages/Downloads";
 import LogsPage from "./pages/Logs";
 import History from "./pages/History";
+import Catalogo from "./pages/Catalogo";
 import Equipamentos from "./pages/Equipamentos";
 import SettingsPage from "./pages/SettingsPage";
 
@@ -21,6 +22,7 @@ function AppWithSSE() {
         <Route path="/" component={Dashboard} />
         <Route path="/downloads" component={Downloads} />
         <Route path="/equipamentos" component={Equipamentos} />
+        <Route path="/catalogo" component={Catalogo} />
         <Route path="/logs" component={LogsPage} />
         <Route path="/history" component={History} />
         <Route path="/settings" component={SettingsPage} />

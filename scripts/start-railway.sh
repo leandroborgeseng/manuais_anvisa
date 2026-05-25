@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-echo "=== ANVISA Dashboard — Railway startup (deploy v2026-05-25d) ==="
+echo "=== ANVISA Dashboard — Railway startup (deploy v2026-05-25-catalog) ==="
 
 if [ -n "$DATABASE_URL" ]; then
   echo "Running database migrations..."

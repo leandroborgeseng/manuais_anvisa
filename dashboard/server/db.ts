@@ -1,4 +1,4 @@
-import { and, desc, eq, gte } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import {
@@ -10,12 +10,18 @@ import {
   InsertUser,
   Log,
   Settings,
+  CatalogSync,
+  InsertCatalogSync,
+  InsertRegistroAnvisa,
+  RegistroAnvisa,
+  catalogSyncs,
   downloads,
   equipamentos,
   executions,
   InsertEquipamento,
   Equipamento,
   logs,
+  registrosAnvisa,
   settings,
   users,
 } from "../drizzle/schema";
@@ -433,4 +439,167 @@ export async function upsertSettings(
       b2BucketName: data.b2BucketName ?? "anvisa-manuais",
     });
   }
+}
+
+// ─── Catálogo ANVISA ──────────────────────────────────────────────────────────
+
+function mapRegistroPayload(raw: Record<string, unknown>): InsertRegistroAnvisa {
+  const meta = raw.metadataJson;
+  return {
+    processo: String(raw.processo ?? ""),
+    numeroRegistro: raw.numeroRegistro != null ? String(raw.numeroRegistro) : undefined,
+    nomeProduto: raw.nomeProduto != null ? String(raw.nomeProduto) : undefined,
+    nomeTecnico: raw.nomeTecnico != null ? String(raw.nomeTecnico) : undefined,
+    situacao: raw.situacao != null ? String(raw.situacao) : undefined,
+    cnpjEmpresa: raw.cnpjEmpresa != null ? String(raw.cnpjEmpresa) : undefined,
+    razaoSocial: raw.razaoSocial != null ? String(raw.razaoSocial) : undefined,
+    autorizacaoEmpresa:
+      raw.autorizacaoEmpresa != null ? String(raw.autorizacaoEmpresa) : undefined,
+    riscoSigla: raw.riscoSigla != null ? String(raw.riscoSigla) : undefined,
+    riscoDescricao: raw.riscoDescricao != null ? String(raw.riscoDescricao) : undefined,
+    vencimentoDescricao:
+      raw.vencimentoDescricao != null ? String(raw.vencimentoDescricao) : undefined,
+    dataInicioVigencia: parseOptionalDate(raw.dataInicioVigencia as string | undefined),
+    dataVencimento: parseOptionalDate(raw.dataVencimento as string | undefined),
+    dataCancelamento: parseOptionalDate(raw.dataCancelamento as string | undefined),
+    cancelado: raw.cancelado != null ? String(raw.cancelado) : undefined,
+    catalogSyncId: typeof raw.catalogSyncId === "number" ? raw.catalogSyncId : undefined,
+    metadataJson:
+      typeof meta === "string"
+        ? meta
+        : meta != null
+          ? JSON.stringify(meta)
+          : JSON.stringify(raw),
+  };
+}
+
+export async function createCatalogSync(
+  data: Pick<InsertCatalogSync, "queryTerm" | "pageSize" | "startPage">
+): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  const result = await db
+    .insert(catalogSyncs)
+    .values({
+      queryTerm: data.queryTerm ?? "a",
+      pageSize: data.pageSize ?? 50,
+      startPage: data.startPage ?? 0,
+      status: "running",
+    })
+    .returning({ id: catalogSyncs.id });
+  return result[0]!.id;
+}
+
+export async function updateCatalogSync(
+  id: number,
+  data: Partial<Omit<CatalogSync, "id" | "startedAt">>
+): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(catalogSyncs).set(data).where(eq(catalogSyncs.id, id));
+}
+
+export async function getCatalogSync(id: number): Promise<CatalogSync | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(catalogSyncs).where(eq(catalogSyncs.id, id)).limit(1);
+  return result[0];
+}
+
+export async function listCatalogSyncs(limit = 20): Promise<CatalogSync[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(catalogSyncs).orderBy(desc(catalogSyncs.startedAt)).limit(limit);
+}
+
+export async function upsertRegistrosBatch(
+  records: Record<string, unknown>[]
+): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  let count = 0;
+  for (const raw of records) {
+    if (!raw.processo) continue;
+    const values = mapRegistroPayload(raw);
+    await db
+      .insert(registrosAnvisa)
+      .values(values)
+      .onConflictDoUpdate({
+        target: registrosAnvisa.processo,
+        set: {
+          ...values,
+          updatedAt: new Date(),
+        },
+      });
+    count += 1;
+  }
+  return count;
+}
+
+export async function countRegistrosAnvisa(): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const result = await db.select({ count: sql<number>`count(*)::int` }).from(registrosAnvisa);
+  return result[0]?.count ?? 0;
+}
+
+export async function listRegistrosAnvisa(options: {
+  search?: string;
+  situacao?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<RegistroAnvisa[]> {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (options.situacao) {
+    conditions.push(eq(registrosAnvisa.situacao, options.situacao));
+  }
+  if (options.search) {
+    const q = `%${options.search}%`;
+    conditions.push(
+      or(
+        ilike(registrosAnvisa.nomeProduto, q),
+        ilike(registrosAnvisa.numeroRegistro, q),
+        ilike(registrosAnvisa.processo, q),
+        ilike(registrosAnvisa.razaoSocial, q),
+        ilike(registrosAnvisa.nomeTecnico, q)
+      )
+    );
+  }
+
+  let query = db
+    .select()
+    .from(registrosAnvisa)
+    .orderBy(desc(registrosAnvisa.updatedAt))
+    .limit(options.limit ?? 100)
+    .offset(options.offset ?? 0);
+
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as typeof query;
+  }
+
+  return query;
+}
+
+export async function getRegistrosStats(): Promise<{
+  total: number;
+  bySituacao: { situacao: string | null; count: number }[];
+}> {
+  const db = await getDb();
+  if (!db) return { total: 0, bySituacao: [] };
+
+  const total = await countRegistrosAnvisa();
+  const bySituacao = await db
+    .select({
+      situacao: registrosAnvisa.situacao,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(registrosAnvisa)
+    .groupBy(registrosAnvisa.situacao)
+    .orderBy(desc(sql`count(*)`))
+    .limit(10);
+
+  return { total, bySituacao };
 }

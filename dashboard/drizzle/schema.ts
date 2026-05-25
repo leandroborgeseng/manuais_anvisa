@@ -120,6 +120,55 @@ export const equipamentos = pgTable("equipamentos", {
 export type Equipamento = typeof equipamentos.$inferSelect;
 export type InsertEquipamento = typeof equipamentos.$inferInsert;
 
+// Catálogo completo ANVISA (fase 1 — inventário)
+export const catalogSyncs = pgTable("catalog_syncs", {
+  id: serial("id").primaryKey(),
+  startedAt: timestamp("startedAt", { mode: "date" }).defaultNow().notNull(),
+  finishedAt: timestamp("finishedAt", { mode: "date" }),
+  status: executionStatusEnum("status").default("running").notNull(),
+  queryTerm: varchar("queryTerm", { length: 64 }).default("a").notNull(),
+  pageSize: integer("pageSize").default(50).notNull(),
+  startPage: integer("startPage").default(0).notNull(),
+  currentPage: integer("currentPage").default(0).notNull(),
+  totalElements: integer("totalElements").default(0).notNull(),
+  totalPages: integer("totalPages").default(0).notNull(),
+  recordsUpserted: integer("recordsUpserted").default(0).notNull(),
+  recordsErrors: integer("recordsErrors").default(0).notNull(),
+  lastError: text("lastError"),
+});
+
+export type CatalogSync = typeof catalogSyncs.$inferSelect;
+export type InsertCatalogSync = typeof catalogSyncs.$inferInsert;
+
+export const registrosAnvisa = pgTable("registros_anvisa", {
+  id: serial("id").primaryKey(),
+  processo: varchar("processo", { length: 32 }).notNull().unique(),
+  numeroRegistro: varchar("numeroRegistro", { length: 64 }),
+  nomeProduto: varchar("nomeProduto", { length: 512 }),
+  nomeTecnico: text("nomeTecnico"),
+  situacao: varchar("situacao", { length: 128 }),
+  cnpjEmpresa: varchar("cnpjEmpresa", { length: 18 }),
+  razaoSocial: text("razaoSocial"),
+  autorizacaoEmpresa: varchar("autorizacaoEmpresa", { length: 32 }),
+  riscoSigla: varchar("riscoSigla", { length: 16 }),
+  riscoDescricao: varchar("riscoDescricao", { length: 128 }),
+  vencimentoDescricao: varchar("vencimentoDescricao", { length: 128 }),
+  dataInicioVigencia: timestamp("dataInicioVigencia", { mode: "date" }),
+  dataVencimento: timestamp("dataVencimento", { mode: "date" }),
+  dataCancelamento: timestamp("dataCancelamento", { mode: "date" }),
+  cancelado: varchar("cancelado", { length: 8 }),
+  catalogSyncId: integer("catalogSyncId"),
+  metadataJson: text("metadataJson"),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { mode: "date" })
+    .defaultNow()
+    .notNull()
+    .$onUpdateFn(() => new Date()),
+});
+
+export type RegistroAnvisa = typeof registrosAnvisa.$inferSelect;
+export type InsertRegistroAnvisa = typeof registrosAnvisa.$inferInsert;
+
 export const logs = pgTable("logs", {
   id: serial("id").primaryKey(),
   executionId: integer("executionId"),

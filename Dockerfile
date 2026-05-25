@@ -33,6 +33,7 @@ COPY scripts/start-railway.sh ./start-railway.sh
 # Python downloader scripts
 COPY requirements.txt /app/scripts/requirements.txt
 COPY anvisa_downloader_b2.py /app/scripts/anvisa_downloader_b2.py
+COPY anvisa_catalog_sync.py /app/scripts/anvisa_catalog_sync.py
 COPY anvisa_downloader_google.py /app/scripts/anvisa_downloader_google.py
 COPY anvisa_downloader_s3.py /app/scripts/anvisa_downloader_s3.py
 
@@ -40,6 +41,7 @@ RUN pip3 install --no-cache-dir --break-system-packages -r /app/scripts/requirem
 
 ENV NODE_ENV=production
 ENV ANVISA_SCRIPT_PATH=/app/scripts/anvisa_downloader_b2.py
+ENV ANVISA_CATALOG_SCRIPT_PATH=/app/scripts/anvisa_catalog_sync.py
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 3000

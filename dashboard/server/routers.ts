@@ -3,8 +3,9 @@ import { z } from "zod";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
-import { getSettings, insertLog, listEquipamentos, listExecutions, listLogs, upsertSettings } from "./db";
+import { getSettings, insertLog, listEquipamentos, listExecutions, listLogs, upsertSettings, listRegistrosAnvisa, getRegistrosStats, listCatalogSyncs, countRegistrosAnvisa } from "./db";
 import { processManager } from "./processManager";
+import { catalogManager } from "./catalogManager";
 
 export const appRouter = router({
   system: systemRouter,
@@ -125,6 +126,56 @@ export const appRouter = router({
       .query(async ({ input }) => {
         return listEquipamentos(input.executionId, input.limit);
       }),
+  }),
+
+  // ─── Catálogo ANVISA (inventário completo) ───────────────────────────────────
+  catalog: router({
+    stats: publicProcedure.query(async () => {
+      const live = catalogManager.getStats();
+      const inDb = await countRegistrosAnvisa();
+      return { ...live, recordsInDb: inDb };
+    }),
+
+    registrosStats: publicProcedure.query(async () => {
+      return getRegistrosStats();
+    }),
+
+    list: publicProcedure
+      .input(
+        z.object({
+          search: z.string().optional(),
+          situacao: z.string().optional(),
+          limit: z.number().default(100),
+          offset: z.number().default(0),
+        })
+      )
+      .query(async ({ input }) => {
+        return listRegistrosAnvisa(input);
+      }),
+
+    syncHistory: publicProcedure
+      .input(z.object({ limit: z.number().default(10) }))
+      .query(async ({ input }) => {
+        return listCatalogSyncs(input.limit);
+      }),
+
+    startSync: publicProcedure
+      .input(
+        z
+          .object({
+            startPage: z.number().min(0).optional(),
+            queryTerm: z.string().optional(),
+            pageSize: z.number().min(10).max(100).optional(),
+          })
+          .optional()
+      )
+      .mutation(async ({ input }) => {
+        return catalogManager.start(input ?? undefined);
+      }),
+
+    stopSync: publicProcedure.mutation(async () => {
+      return catalogManager.stop();
+    }),
   }),
 });
 
