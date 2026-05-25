@@ -1,7 +1,6 @@
 import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
-import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
 import { registerStorageProxy } from "./storageProxy";
@@ -10,26 +9,13 @@ import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { processManager } from "../processManager";
 
-function isPortAvailable(port: number): Promise<boolean> {
-  return new Promise(resolve => {
-    const server = net.createServer();
-    server.listen(port, () => {
-      server.close(() => resolve(true));
-    });
-    server.on("error", () => resolve(false));
-  });
-}
-
-async function findAvailablePort(startPort: number = 3000): Promise<number> {
-  for (let port = startPort; port < startPort + 20; port++) {
-    if (await isPortAvailable(port)) {
-      return port;
-    }
-  }
-  throw new Error(`No available port found starting from ${startPort}`);
-}
-
 async function startServer() {
+  console.log("=== ANVISA Dashboard Server Starting ===");
+  console.log(`NODE_ENV: ${process.env.NODE_ENV}`);
+  console.log(`PORT env: ${process.env.PORT}`);
+  console.log(`DATABASE_URL set: ${!!process.env.DATABASE_URL}`);
+  console.log(`JWT_SECRET set: ${!!process.env.JWT_SECRET}`);
+
   const app = express();
   const server = createServer(app);
   app.use(express.json({ limit: "50mb" }));
@@ -45,17 +31,14 @@ async function startServer() {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.flushHeaders();
 
-    // Send initial state
     const initial = processManager.getStats();
     res.write(`data: ${JSON.stringify(initial)}\n\n`);
 
-    // Subscribe to updates
     const onUpdate = (stats: unknown) => {
       res.write(`data: ${JSON.stringify(stats)}\n\n`);
     };
     processManager.on("update", onUpdate);
 
-    // Heartbeat every 15s
     const heartbeat = setInterval(() => {
       res.write(`: heartbeat\n\n`);
     }, 15000);
@@ -81,16 +64,22 @@ async function startServer() {
     serveStatic(app);
   }
 
-  const preferredPort = parseInt(process.env.PORT || "3000");
-  const port = await findAvailablePort(preferredPort);
+  // Railway injects PORT; must listen on 0.0.0.0 (all interfaces)
+  const port = parseInt(process.env.PORT || "3000", 10);
+  const host = "0.0.0.0";
 
-  if (port !== preferredPort) {
-    console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
-  }
+  server.listen(port, host, () => {
+    console.log(`=== Server listening on ${host}:${port} ===`);
+    console.log(`=== Access via http://localhost:${port}/ ===`);
+  });
 
-  server.listen(port, () => {
-    console.log(`Server running on http://localhost:${port}/`);
+  server.on("error", (err) => {
+    console.error("=== Server error ===", err);
+    process.exit(1);
   });
 }
 
-startServer().catch(console.error);
+startServer().catch((err) => {
+  console.error("=== Failed to start server ===", err);
+  process.exit(1);
+});
