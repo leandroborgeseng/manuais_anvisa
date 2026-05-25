@@ -276,7 +276,7 @@ class AnvisaB2Downloader:
             logger.error(f"Erro ao salvar progresso: {e}")
     
     def _is_manual_attachment(self, arquivo: Dict) -> bool:
-        """Aceita qualquer anexo PDF — nomes na ANVISA raramente contêm 'manual'."""
+        """Anexo PDF de instruções de uso / manual (tipo oficial ANVISA)."""
         if not arquivo.get("anexoCod"):
             return False
 
@@ -286,10 +286,41 @@ class AnvisaB2Downloader:
             + " "
             + (arquivo.get("nomeArquivo") or "")
         ).lower()
+        descricao = (arquivo.get("descricaoTipoAnexo") or "").upper()
 
         if tipo and tipo != "PDF":
             return False
-        return tipo == "PDF" or ".pdf" in nome
+        if not (tipo == "PDF" or ".pdf" in nome):
+            return False
+
+        if os.getenv("ANVISA_ANY_PDF", "").lower() in ("1", "true", "yes"):
+            return True
+
+        manual_markers = ("INSTRU", "MANUAL", "USO")
+        return any(m in descricao for m in manual_markers)
+
+    def _validate_pdf_bytes(self, data: bytes, url: str) -> Optional[str]:
+        """Retorna mensagem de erro ou None se PDF válido."""
+        if not data.startswith(b"%PDF"):
+            return "não começa com %PDF"
+        min_size = int(os.getenv("ANVISA_MIN_PDF_BYTES", "20480"))
+        if len(data) < min_size:
+            return f"tamanho suspeito ({len(data)} bytes, mínimo {min_size})"
+        if b"%%EOF" not in data[-4096:]:
+            return "sem marcador %%EOF (arquivo truncado ou inválido)"
+        return None
+
+    def _download_pdf_bytes(self, url: str) -> bytes:
+        """Baixa o PDF completo em uma única leitura (evita truncar no 1º chunk)."""
+        headers = {
+            "Accept": "application/pdf, application/octet-stream, */*",
+            "Referer": "https://consultas.anvisa.gov.br/",
+        }
+        response = self.session.get(
+            url, timeout=120, allow_redirects=True, headers=headers
+        )
+        response.raise_for_status()
+        return response.content
 
     def search_anvisa_pdfs(
         self,
@@ -381,6 +412,12 @@ class AnvisaB2Downloader:
                         break
                 else:
                     empty_pages = 0
+                    # Já processou manuais desta página (download sequencial) — próximo termo
+                    if on_manual:
+                        logger.info(
+                            f"Termo '{term}': {page_manuals} manuais na pág {page} — próximo termo"
+                        )
+                        break
 
                 if is_last:
                     break
@@ -503,7 +540,7 @@ class AnvisaB2Downloader:
 
                 download_url = (
                     "https://consultas.anvisa.gov.br/api/consulta/produtos/"
-                    f"{processo}/anexo/{anexo_cod}/nomeArquivo/{quote(nome, safe='')}?Authorization="
+                    f"{processo}/anexo/{anexo_cod}/nomeArquivo/{quote(nome, safe='')}"
                 )
                 pdf_filename = self._sanitize_filename(os.path.basename(nome))
                 metadata = self._build_equipamento_metadata(detail, arq, download_url, pdf_filename)
@@ -595,29 +632,19 @@ class AnvisaB2Downloader:
                 print(f"EQUIPAMENTO {json.dumps(equip_meta, ensure_ascii=False)}", flush=True)
                 print(f"DOWNLOAD_START:{filename}:{url}", flush=True)
 
-            # Download para arquivo temporário
-            response = self.session.get(url, timeout=60, stream=True, allow_redirects=True)
-            response.raise_for_status()
-
-            # Validar PDF — peek first chunk
-            first_chunk = b""
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    first_chunk = chunk
-                    break
-            if not first_chunk.startswith(b"%PDF"):
-                logger.warning(f"Arquivo não é um PDF válido: {url}")
-                print(f"ERROR:{filename}:Arquivo não é PDF válido", flush=True)
+            # Download completo (não usar iter_content duas vezes — truncava em ~8 KB)
+            pdf_data = self._download_pdf_bytes(url)
+            pdf_error = self._validate_pdf_bytes(pdf_data, url)
+            if pdf_error:
+                logger.warning(f"PDF inválido ({pdf_error}): {url}")
+                print(f"ERROR:{filename}:PDF inválido — {pdf_error}", flush=True)
                 return False
 
             temp_file = self.output_dir / filename
             with open(temp_file, "wb") as f:
-                f.write(first_chunk)
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-            
-            file_size = temp_file.stat().st_size
+                f.write(pdf_data)
+
+            file_size = len(pdf_data)
             logger.info(f"Download concluído: {filename} ({file_size} bytes)")
             
             # Upload para B2 se configurado
