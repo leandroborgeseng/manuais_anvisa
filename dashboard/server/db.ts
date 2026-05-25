@@ -348,17 +348,153 @@ export async function linkEquipamentoToDownloadByFilename(
   }
 }
 
-export async function listEquipamentos(
-  executionId?: number,
-  limit = 200
-): Promise<Equipamento[]> {
+export async function listEquipamentos(options: {
+  executionId?: number;
+  search?: string;
+  limit?: number;
+  offset?: number;
+} = {}): Promise<{ items: Equipamento[]; total: number }> {
   const db = await getDb();
-  if (!db) return [];
-  const query = db.select().from(equipamentos).orderBy(desc(equipamentos.createdAt)).limit(limit);
-  if (executionId !== undefined) {
-    return query.where(eq(equipamentos.executionId, executionId));
+  if (!db) return { items: [], total: 0 };
+
+  const limit = options.limit ?? 100;
+  const offset = options.offset ?? 0;
+  const conditions = [];
+
+  if (options.executionId !== undefined) {
+    conditions.push(eq(equipamentos.executionId, options.executionId));
   }
-  return query;
+  if (options.search?.trim()) {
+    const q = `%${options.search.trim()}%`;
+    conditions.push(
+      or(
+        ilike(equipamentos.nomeProduto, q),
+        ilike(equipamentos.numeroRegistro, q),
+        ilike(equipamentos.processo, q),
+        ilike(equipamentos.razaoSocial, q),
+        ilike(equipamentos.nomeTecnico, q),
+        ilike(equipamentos.nomeArquivo, q)
+      )
+    );
+  }
+
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+  const [countRow] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(equipamentos)
+    .where(whereClause);
+
+  let query = db
+    .select()
+    .from(equipamentos)
+    .orderBy(desc(equipamentos.createdAt))
+    .limit(limit)
+    .offset(offset);
+
+  if (whereClause) {
+    query = query.where(whereClause) as typeof query;
+  }
+
+  const items = await query;
+  return { items, total: countRow?.count ?? 0 };
+}
+
+async function getCatalogTotalEstimate(): Promise<number> {
+  const envTotal = parseInt(process.env.ANVISA_CATALOG_TOTAL ?? "188764", 10);
+  const db = await getDb();
+  if (!db) return envTotal;
+
+  const syncs = await db
+    .select({ totalElements: catalogSyncs.totalElements })
+    .from(catalogSyncs)
+    .where(sql`${catalogSyncs.totalElements} > 0`)
+    .orderBy(desc(catalogSyncs.startedAt))
+    .limit(1);
+
+  if (syncs[0]?.totalElements && syncs[0].totalElements > 0) {
+    return syncs[0].totalElements;
+  }
+
+  const registrosCount = await countRegistrosAnvisa();
+  if (registrosCount > 0) return registrosCount;
+
+  return envTotal;
+}
+
+export async function getEquipamentosStats(executionId?: number): Promise<{
+  equipamentosUnicos: number;
+  totalArquivos: number;
+  totalBytes: number;
+  catalogTotal: number;
+  percentCatalog: number;
+  loteAtualEquipamentos: number;
+  loteAtualArquivos: number;
+  totalExecucoes: number;
+}> {
+  const db = await getDb();
+  const catalogTotal = await getCatalogTotalEstimate();
+
+  if (!db) {
+    return {
+      equipamentosUnicos: 0,
+      totalArquivos: 0,
+      totalBytes: 0,
+      catalogTotal,
+      percentCatalog: 0,
+      loteAtualEquipamentos: 0,
+      loteAtualArquivos: 0,
+      totalExecucoes: 0,
+    };
+  }
+
+  const [globalRow] = await db
+    .select({
+      equipamentosUnicos: sql<number>`count(distinct ${equipamentos.processo})::int`,
+      totalArquivos: sql<number>`count(*)::int`,
+    })
+    .from(equipamentos);
+
+  const [bytesRow] = await db
+    .select({
+      totalBytes: sql<number>`coalesce(sum(${downloads.sizeBytes}), 0)::bigint`,
+    })
+    .from(downloads)
+    .where(eq(downloads.status, "concluído"));
+
+  const [execRow] = await db
+    .select({ total: sql<number>`count(*)::int` })
+    .from(executions);
+
+  let loteAtualEquipamentos = 0;
+  let loteAtualArquivos = 0;
+
+  if (executionId !== undefined) {
+    const [batchRow] = await db
+      .select({
+        equipamentosUnicos: sql<number>`count(distinct ${equipamentos.processo})::int`,
+        totalArquivos: sql<number>`count(*)::int`,
+      })
+      .from(equipamentos)
+      .where(eq(equipamentos.executionId, executionId));
+    loteAtualEquipamentos = batchRow?.equipamentosUnicos ?? 0;
+    loteAtualArquivos = batchRow?.totalArquivos ?? 0;
+  }
+
+  const equipamentosUnicos = globalRow?.equipamentosUnicos ?? 0;
+  const totalArquivos = globalRow?.totalArquivos ?? 0;
+  const totalBytes = Number(bytesRow?.totalBytes ?? 0);
+
+  return {
+    equipamentosUnicos,
+    totalArquivos,
+    totalBytes,
+    catalogTotal,
+    percentCatalog: catalogTotal > 0 ? (equipamentosUnicos / catalogTotal) * 100 : 0,
+    loteAtualEquipamentos,
+    loteAtualArquivos,
+    totalExecucoes: execRow?.total ?? 0,
+  };
 }
 
 export async function getEquipamentoByDownload(downloadId: number): Promise<Equipamento | undefined> {

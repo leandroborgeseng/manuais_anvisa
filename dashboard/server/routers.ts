@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
-import { getSettings, insertLog, listEquipamentos, listExecutions, listLogs, upsertSettings, listRegistrosAnvisa, getRegistrosStats, listCatalogSyncs, countRegistrosAnvisa } from "./db";
+import { getSettings, insertLog, listEquipamentos, getEquipamentosStats, listExecutions, listLogs, upsertSettings, listRegistrosAnvisa, getRegistrosStats, listCatalogSyncs, countRegistrosAnvisa } from "./db";
 import { processManager } from "./processManager";
 import { catalogManager } from "./catalogManager";
 
@@ -116,15 +116,23 @@ export const appRouter = router({
 
   // ─── Equipamentos (metadados ANVISA) ───────────────────────────────────────
   equipamentos: router({
+    stats: publicProcedure
+      .input(z.object({ executionId: z.number().optional() }).optional())
+      .query(async ({ input }) => {
+        return getEquipamentosStats(input?.executionId);
+      }),
+
     list: publicProcedure
       .input(
         z.object({
           executionId: z.number().optional(),
-          limit: z.number().default(200),
+          search: z.string().optional(),
+          limit: z.number().min(1).max(500).default(100),
+          offset: z.number().min(0).default(0),
         })
       )
       .query(async ({ input }) => {
-        return listEquipamentos(input.executionId, input.limit);
+        return listEquipamentos(input);
       }),
   }),
 
