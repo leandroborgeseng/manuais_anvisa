@@ -10,9 +10,26 @@ import {
   listDownloadsByExecution,
   updateDownload,
   updateExecution,
+  upsertEquipamentoFromPayload,
 } from "./db";
 
 export type ProcessStatus = "idle" | "running" | "paused" | "stopped" | "completed" | "error";
+
+export interface EquipamentoInfo {
+  processo?: string;
+  numeroRegistro?: string;
+  nomeProduto?: string;
+  nomeTecnico?: string;
+  situacao?: string;
+  razaoSocial?: string;
+  cnpjEmpresa?: string;
+  riscoDescricao?: string;
+  vencimentoDescricao?: string;
+  dataInicioVigencia?: string;
+  dataVencimento?: string;
+  dataCancelamento?: string;
+  tipoAnexo?: string;
+}
 
 export interface DownloadItem {
   id: number;
@@ -23,6 +40,7 @@ export interface DownloadItem {
   sizeBytes: number;
   errorMessage?: string;
   b2Key?: string;
+  equipamento?: EquipamentoInfo;
 }
 
 export interface DashboardStats {
@@ -226,12 +244,56 @@ class ProcessManager extends EventEmitter {
 
     await insertLog({ executionId: execId, level, message: trimmed });
 
+    if (trimmed.startsWith("EQUIPAMENTO ")) {
+      try {
+        const payload = JSON.parse(trimmed.slice("EQUIPAMENTO ".length)) as Record<string, unknown>;
+        await upsertEquipamentoFromPayload(execId, payload);
+        const pdfFilename = payload.pdfFilename ? String(payload.pdfFilename) : undefined;
+        if (pdfFilename) {
+          const item = this.stats.downloads.find((d) => d.filename === pdfFilename);
+          if (item) {
+            item.equipamento = this.toEquipamentoInfo(payload);
+          }
+        }
+      } catch (err) {
+        await insertLog({
+          executionId: execId,
+          level: "WARNING",
+          message: `Falha ao salvar metadados do equipamento: ${err}`,
+        });
+      }
+      this.emitUpdate();
+      return;
+    }
+
     // Parse structured output
-    this.parseStatusLine(trimmed, execId);
+    await this.parseStatusLine(trimmed, execId);
     this.emitUpdate();
   }
 
-  private parseStatusLine(line: string, _execId: number) {
+  private toEquipamentoInfo(payload: Record<string, unknown>): EquipamentoInfo {
+    return {
+      processo: payload.processo ? String(payload.processo) : undefined,
+      numeroRegistro: payload.numeroRegistro ? String(payload.numeroRegistro) : undefined,
+      nomeProduto: payload.nomeProduto ? String(payload.nomeProduto) : undefined,
+      nomeTecnico: payload.nomeTecnico ? String(payload.nomeTecnico) : undefined,
+      situacao: payload.situacao ? String(payload.situacao) : undefined,
+      razaoSocial: payload.razaoSocial ? String(payload.razaoSocial) : undefined,
+      cnpjEmpresa: payload.cnpjEmpresa ? String(payload.cnpjEmpresa) : undefined,
+      riscoDescricao: payload.riscoDescricao ? String(payload.riscoDescricao) : undefined,
+      vencimentoDescricao: payload.vencimentoDescricao
+        ? String(payload.vencimentoDescricao)
+        : undefined,
+      dataInicioVigencia: payload.dataInicioVigencia
+        ? String(payload.dataInicioVigencia)
+        : undefined,
+      dataVencimento: payload.dataVencimento ? String(payload.dataVencimento) : undefined,
+      dataCancelamento: payload.dataCancelamento ? String(payload.dataCancelamento) : undefined,
+      tipoAnexo: payload.tipoAnexo ? String(payload.tipoAnexo) : undefined,
+    };
+  }
+
+  private async parseStatusLine(line: string, execId: number) {
     // Parse patterns like: DOWNLOAD_START:filename.pdf:url
     if (line.startsWith("DOWNLOAD_START:")) {
       const parts = line.split(":");
@@ -247,6 +309,18 @@ class ProcessManager extends EventEmitter {
       };
       this.stats.downloads.unshift(item);
       this.stats.totalFound = Math.max(this.stats.totalFound, this.stats.downloads.length);
+
+      try {
+        const dbId = await createDownload({
+          executionId: execId,
+          filename,
+          url,
+          status: "baixando",
+        });
+        item.id = dbId;
+      } catch {
+        /* DB opcional */
+      }
     } else if (line.startsWith("DOWNLOAD_PROGRESS:")) {
       const parts = line.split(":");
       const filename = parts[1];
@@ -267,6 +341,12 @@ class ProcessManager extends EventEmitter {
         item.progress = 100;
         if (b2Key) item.b2Key = b2Key;
         this.stats.totalCompleted++;
+        await updateDownload(item.id, {
+          status: "concluído",
+          progress: 100,
+          b2Key: b2Key ?? undefined,
+          completedAt: new Date(),
+        }).catch(() => undefined);
       }
     } else if (line.startsWith("ERROR:")) {
       const parts = line.split(":");

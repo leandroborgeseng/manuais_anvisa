@@ -11,7 +11,10 @@ import {
   Log,
   Settings,
   downloads,
+  equipamentos,
   executions,
+  InsertEquipamento,
+  Equipamento,
   logs,
   settings,
   users,
@@ -169,6 +172,168 @@ export async function getDownload(id: number): Promise<Download | undefined> {
   const db = await getDb();
   if (!db) return undefined;
   const result = await db.select().from(downloads).where(eq(downloads.id, id)).limit(1);
+  return result[0];
+}
+
+function parseOptionalDate(value?: string | null): Date | null {
+  if (!value) return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+// ─── Equipamentos (metadados ANVISA) ──────────────────────────────────────────
+
+export async function upsertEquipamento(
+  data: InsertEquipamento & {
+    pdfFilename?: string;
+  }
+): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const values: InsertEquipamento = {
+    executionId: data.executionId,
+    downloadId: data.downloadId,
+    processo: data.processo,
+    numeroRegistro: data.numeroRegistro,
+    nomeProduto: data.nomeProduto,
+    nomeTecnico: data.nomeTecnico,
+    situacao: data.situacao,
+    cnpjEmpresa: data.cnpjEmpresa,
+    razaoSocial: data.razaoSocial,
+    autorizacaoEmpresa: data.autorizacaoEmpresa,
+    riscoSigla: data.riscoSigla,
+    riscoDescricao: data.riscoDescricao,
+    vencimentoDescricao: data.vencimentoDescricao,
+    vencimentoVencido: data.vencimentoVencido,
+    dataInicioVigencia: data.dataInicioVigencia,
+    dataVencimento: data.dataVencimento,
+    dataCancelamento: data.dataCancelamento,
+    cancelado: data.cancelado,
+    tipoAnexo: data.tipoAnexo,
+    nomeArquivo: data.nomeArquivo,
+    dataEnvioAnexo: data.dataEnvioAnexo,
+    pdfUrl: data.pdfUrl,
+    b2MetaKey: data.b2MetaKey,
+    fabricantesJson: data.fabricantesJson,
+    metadataJson: data.metadataJson,
+  };
+
+  const conditions = [eq(equipamentos.processo, data.processo)];
+  if (data.executionId != null) {
+    conditions.push(eq(equipamentos.executionId, data.executionId));
+  }
+  if (data.pdfUrl) {
+    conditions.push(eq(equipamentos.pdfUrl, data.pdfUrl));
+  }
+
+  const existing = await db
+    .select()
+    .from(equipamentos)
+    .where(and(...conditions))
+    .limit(1);
+
+  if (existing[0]) {
+    await db.update(equipamentos).set(values).where(eq(equipamentos.id, existing[0].id));
+    return existing[0].id;
+  }
+
+  const result = await db.insert(equipamentos).values(values).returning({ id: equipamentos.id });
+  return result[0]!.id;
+}
+
+export async function upsertEquipamentoFromPayload(
+  executionId: number,
+  payload: Record<string, unknown>
+): Promise<number> {
+  const id = await upsertEquipamento({
+    executionId,
+    downloadId: typeof payload.downloadId === "number" ? payload.downloadId : undefined,
+    processo: String(payload.processo ?? ""),
+    numeroRegistro: payload.numeroRegistro ? String(payload.numeroRegistro) : undefined,
+    nomeProduto: payload.nomeProduto ? String(payload.nomeProduto) : undefined,
+    nomeTecnico: payload.nomeTecnico ? String(payload.nomeTecnico) : undefined,
+    situacao: payload.situacao ? String(payload.situacao) : undefined,
+    cnpjEmpresa: payload.cnpjEmpresa ? String(payload.cnpjEmpresa) : undefined,
+    razaoSocial: payload.razaoSocial ? String(payload.razaoSocial) : undefined,
+    autorizacaoEmpresa: payload.autorizacaoEmpresa ? String(payload.autorizacaoEmpresa) : undefined,
+    riscoSigla: payload.riscoSigla ? String(payload.riscoSigla) : undefined,
+    riscoDescricao: payload.riscoDescricao ? String(payload.riscoDescricao) : undefined,
+    vencimentoDescricao: payload.vencimentoDescricao ? String(payload.vencimentoDescricao) : undefined,
+    vencimentoVencido:
+      payload.vencimentoVencido != null ? String(payload.vencimentoVencido) : undefined,
+    dataInicioVigencia: parseOptionalDate(payload.dataInicioVigencia as string | undefined),
+    dataVencimento: parseOptionalDate(payload.dataVencimento as string | undefined),
+    dataCancelamento: parseOptionalDate(payload.dataCancelamento as string | undefined),
+    cancelado: payload.cancelado != null ? String(payload.cancelado) : undefined,
+    tipoAnexo: payload.tipoAnexo ? String(payload.tipoAnexo) : undefined,
+    nomeArquivo: payload.nomeArquivo ? String(payload.nomeArquivo) : undefined,
+    dataEnvioAnexo: parseOptionalDate(payload.dataEnvioAnexo as string | undefined),
+    pdfUrl: payload.pdfUrl ? String(payload.pdfUrl) : undefined,
+    b2MetaKey: payload.b2MetaKey ? String(payload.b2MetaKey) : undefined,
+    fabricantesJson: payload.fabricantes
+      ? JSON.stringify(payload.fabricantes)
+      : payload.fabricantesJson
+        ? String(payload.fabricantesJson)
+        : undefined,
+    metadataJson: JSON.stringify(payload),
+  });
+
+  const pdfFilename = payload.pdfFilename ? String(payload.pdfFilename) : undefined;
+  if (pdfFilename && executionId) {
+    const dl = await dbGetDownloadByFilename(executionId, pdfFilename);
+    if (dl) {
+      await linkEquipamentoToDownload(id, dl.id);
+    }
+  }
+
+  return id;
+}
+
+async function dbGetDownloadByFilename(executionId: number, filename: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db
+    .select()
+    .from(downloads)
+    .where(and(eq(downloads.executionId, executionId), eq(downloads.filename, filename)))
+    .limit(1);
+  return result[0];
+}
+
+export async function linkEquipamentoToDownload(
+  equipamentoId: number,
+  downloadId: number
+): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db
+    .update(equipamentos)
+    .set({ downloadId })
+    .where(eq(equipamentos.id, equipamentoId));
+}
+
+export async function listEquipamentos(
+  executionId?: number,
+  limit = 200
+): Promise<Equipamento[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const query = db.select().from(equipamentos).orderBy(desc(equipamentos.createdAt)).limit(limit);
+  if (executionId !== undefined) {
+    return query.where(eq(equipamentos.executionId, executionId));
+  }
+  return query;
+}
+
+export async function getEquipamentoByDownload(downloadId: number): Promise<Equipamento | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db
+    .select()
+    .from(equipamentos)
+    .where(eq(equipamentos.downloadId, downloadId))
+    .limit(1);
   return result[0];
 }
 

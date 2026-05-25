@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
-import { getSettings, insertLog, listExecutions, listLogs, upsertSettings } from "./db";
+import { getSettings, insertLog, listEquipamentos, listExecutions, listLogs, upsertSettings } from "./db";
 import { processManager } from "./processManager";
 
 export const appRouter = router({
@@ -110,6 +110,20 @@ export const appRouter = router({
       .input(z.object({ limit: z.number().default(20) }))
       .query(async ({ input }) => {
         return listExecutions(input.limit);
+      }),
+  }),
+
+  // ─── Equipamentos (metadados ANVISA) ───────────────────────────────────────
+  equipamentos: router({
+    list: publicProcedure
+      .input(
+        z.object({
+          executionId: z.number().optional(),
+          limit: z.number().default(200),
+        })
+      )
+      .query(async ({ input }) => {
+        return listEquipamentos(input.executionId, input.limit);
       }),
   }),
 });

@@ -1,5 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 
+export interface EquipamentoInfo {
+  processo?: string;
+  numeroRegistro?: string;
+  nomeProduto?: string;
+  nomeTecnico?: string;
+  situacao?: string;
+  razaoSocial?: string;
+  cnpjEmpresa?: string;
+  riscoDescricao?: string;
+  vencimentoDescricao?: string;
+  dataInicioVigencia?: string;
+  dataVencimento?: string;
+  dataCancelamento?: string;
+  tipoAnexo?: string;
+}
+
 export interface DownloadItem {
   id: number;
   filename: string;
@@ -9,6 +25,7 @@ export interface DownloadItem {
   sizeBytes: number;
   errorMessage?: string;
   b2Key?: string;
+  equipamento?: EquipamentoInfo;
 }
 
 export interface DashboardStats {

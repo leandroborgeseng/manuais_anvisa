@@ -82,6 +82,17 @@ function DownloadRow({ item }: { item: DownloadItem }) {
           {item.b2Key && (
             <p className="text-xs text-white/30 truncate font-mono mt-0.5">{item.b2Key}</p>
           )}
+          {item.equipamento && (
+            <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1 text-xs text-white/40">
+              {item.equipamento.numeroRegistro && (
+                <span>Registro: {item.equipamento.numeroRegistro}</span>
+              )}
+              {item.equipamento.situacao && <span>Situação: {item.equipamento.situacao}</span>}
+              {item.equipamento.vencimentoDescricao && (
+                <span>Validade: {item.equipamento.vencimentoDescricao}</span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Size */}

@@ -82,6 +82,44 @@ export const downloads = pgTable("downloads", {
 export type Download = typeof downloads.$inferSelect;
 export type InsertDownload = typeof downloads.$inferInsert;
 
+// Metadados do equipamento (API ANVISA) vinculados ao manual/PDF
+export const equipamentos = pgTable("equipamentos", {
+  id: serial("id").primaryKey(),
+  executionId: integer("executionId"),
+  downloadId: integer("downloadId"),
+  processo: varchar("processo", { length: 32 }).notNull(),
+  numeroRegistro: varchar("numeroRegistro", { length: 64 }),
+  nomeProduto: varchar("nomeProduto", { length: 512 }),
+  nomeTecnico: text("nomeTecnico"),
+  situacao: varchar("situacao", { length: 128 }),
+  cnpjEmpresa: varchar("cnpjEmpresa", { length: 18 }),
+  razaoSocial: text("razaoSocial"),
+  autorizacaoEmpresa: varchar("autorizacaoEmpresa", { length: 32 }),
+  riscoSigla: varchar("riscoSigla", { length: 16 }),
+  riscoDescricao: varchar("riscoDescricao", { length: 128 }),
+  vencimentoDescricao: varchar("vencimentoDescricao", { length: 128 }),
+  vencimentoVencido: varchar("vencimentoVencido", { length: 8 }),
+  dataInicioVigencia: timestamp("dataInicioVigencia", { mode: "date" }),
+  dataVencimento: timestamp("dataVencimento", { mode: "date" }),
+  dataCancelamento: timestamp("dataCancelamento", { mode: "date" }),
+  cancelado: varchar("cancelado", { length: 8 }),
+  tipoAnexo: varchar("tipoAnexo", { length: 256 }),
+  nomeArquivo: varchar("nomeArquivo", { length: 512 }),
+  dataEnvioAnexo: timestamp("dataEnvioAnexo", { mode: "date" }),
+  pdfUrl: text("pdfUrl"),
+  b2MetaKey: varchar("b2MetaKey", { length: 512 }),
+  fabricantesJson: text("fabricantesJson"),
+  metadataJson: text("metadataJson"),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { mode: "date" })
+    .defaultNow()
+    .notNull()
+    .$onUpdateFn(() => new Date()),
+});
+
+export type Equipamento = typeof equipamentos.$inferSelect;
+export type InsertEquipamento = typeof equipamentos.$inferInsert;
+
 export const logs = pgTable("logs", {
   id: serial("id").primaryKey(),
   executionId: integer("executionId"),

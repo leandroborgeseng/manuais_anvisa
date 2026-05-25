@@ -21,6 +21,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { href: "/", label: "Dashboard", icon: <LayoutDashboard size={18} /> },
   { href: "/downloads", label: "Downloads", icon: <Download size={18} /> },
+  { href: "/equipamentos", label: "Equipamentos", icon: <FileText size={18} /> },
   { href: "/logs", label: "Logs ao Vivo", icon: <Activity size={18} /> },
   { href: "/history", label: "Histórico", icon: <Clock size={18} /> },
   { href: "/settings", label: "Configurações", icon: <Settings size={18} /> },

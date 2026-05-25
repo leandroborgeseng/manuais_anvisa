@@ -209,6 +209,7 @@ class AnvisaB2Downloader:
         self.progress_file = self.output_dir / "progress_b2.json"
         self.manifest_file = self.output_dir / "manifest_b2.json"
         self.downloaded_urls: Set[str] = set()
+        self.manual_metadata: Dict[str, Dict] = {}
         
         # Criar diretório de saída
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -310,11 +311,15 @@ class AnvisaB2Downloader:
                     if not processo:
                         continue
 
-                    for pdf_url in self._get_product_pdf_urls(processo, term):
-                        if pdf_url not in seen:
-                            seen.add(pdf_url)
-                            urls.append(pdf_url)
-                            logger.info(f"Manual encontrado: {product.get('produto', processo)} -> {pdf_url}")
+                    for manual in self._get_product_manuals(processo, term):
+                        url = manual["url"]
+                        if url not in seen:
+                            seen.add(url)
+                            urls.append(url)
+                            self.manual_metadata[url] = manual["metadata"]
+                            logger.info(
+                                f"Manual encontrado: {manual['metadata'].get('nomeProduto', processo)} -> {url}"
+                            )
                             if len(urls) >= max_results:
                                 break
 
@@ -360,19 +365,59 @@ class AnvisaB2Downloader:
             logger.warning(f"Erro na API ANVISA para '{nome_produto}' pág {pagina}: {e}")
             return [], True
 
-    def _get_product_pdf_urls(self, processo: str, nome_produto: str) -> List[str]:
-        """Obtém URLs de download de PDFs (manuais) de um produto."""
+    def _parse_anvisa_date(self, value: Optional[str]) -> Optional[str]:
+        if not value:
+            return None
+        return value
+
+    def _build_equipamento_metadata(
+        self, detail: Dict, arquivo: Dict, pdf_url: str, pdf_filename: str
+    ) -> Dict:
+        venc = detail.get("vencimento") or {}
+        risco = detail.get("risco") or {}
+        empresa = detail.get("empresa") or {}
+        return {
+            "processo": detail.get("processo"),
+            "numeroRegistro": detail.get("registro"),
+            "nomeProduto": detail.get("produto"),
+            "nomeTecnico": detail.get("nomeTecnico"),
+            "situacao": detail.get("situacao"),
+            "cnpjEmpresa": empresa.get("cnpj"),
+            "razaoSocial": empresa.get("razaoSocial"),
+            "autorizacaoEmpresa": empresa.get("autorizacao"),
+            "riscoSigla": risco.get("sigla"),
+            "riscoDescricao": risco.get("descricao"),
+            "vencimentoDescricao": venc.get("descricao"),
+            "vencimentoVencido": venc.get("vencido"),
+            "dataInicioVigencia": self._parse_anvisa_date(detail.get("dataInicioVigencia")),
+            "dataVencimento": self._parse_anvisa_date(
+                detail.get("dataVencimento") or venc.get("data")
+            ),
+            "dataCancelamento": self._parse_anvisa_date(detail.get("dataCancelamento")),
+            "cancelado": detail.get("cancelado"),
+            "tipoAnexo": arquivo.get("descricaoTipoAnexo"),
+            "nomeArquivo": arquivo.get("nomeCompleto") or arquivo.get("nomeArquivo"),
+            "dataEnvioAnexo": self._parse_anvisa_date(arquivo.get("dtEnvio")),
+            "anexoCod": arquivo.get("anexoCod"),
+            "nuExpediente": arquivo.get("nuExpediente"),
+            "fabricantes": detail.get("fabricantes", []),
+            "pdfUrl": pdf_url,
+            "pdfFilename": pdf_filename,
+        }
+
+    def _get_product_manuals(self, processo: str, nome_produto: str) -> List[Dict]:
+        """Obtém manuais PDF e metadados completos de um produto."""
         api_url = f"https://consultas.anvisa.gov.br/api/consulta/saude/{processo}"
         params = {"nomeProduto": nome_produto}
-        urls: List[str] = []
+        manuals: List[Dict] = []
 
         try:
             response = self.session.get(api_url, params=params, timeout=30)
             if response.status_code != 200:
-                return urls
+                return manuals
 
-            arquivos = response.json().get("arquivos", [])
-            for arq in arquivos:
+            detail = response.json()
+            for arq in detail.get("arquivos", []):
                 if arq.get("tipoArquivo", "").upper() != "PDF":
                     continue
 
@@ -385,12 +430,18 @@ class AnvisaB2Downloader:
                     "https://consultas.anvisa.gov.br/api/consulta/produtos/"
                     f"{processo}/anexo/{anexo_cod}/nomeArquivo/{quote(nome, safe='')}?Authorization="
                 )
-                urls.append(download_url)
+                pdf_filename = self._sanitize_filename(os.path.basename(nome))
+                metadata = self._build_equipamento_metadata(detail, arq, download_url, pdf_filename)
+                manuals.append({"url": download_url, "metadata": metadata})
 
         except Exception as e:
             logger.debug(f"Erro ao obter anexos do processo {processo}: {e}")
 
-        return urls
+        return manuals
+
+    def _get_product_pdf_urls(self, processo: str, nome_produto: str) -> List[str]:
+        """Compatibilidade: retorna apenas URLs."""
+        return [m["url"] for m in self._get_product_manuals(processo, nome_produto)]
 
     def _search_duckduckgo(self, query: str, max_results: int = 20) -> List[str]:
         """Fallback: busca no DuckDuckGo (pode falhar em datacenters)."""
@@ -442,6 +493,8 @@ class AnvisaB2Downloader:
             True se bem-sucedido
         """
         temp_file = None
+        meta_file = None
+        filename = ""
         
         try:
             if url in self.downloaded_urls:
@@ -456,6 +509,8 @@ class AnvisaB2Downloader:
             if not filename or not filename.lower().endswith(".pdf"):
                 filename = f"manual_{int(time.time())}.pdf"
             filename = self._sanitize_filename(filename)
+            equip_meta = {**self.manual_metadata.get(url, {}), "pdfFilename": filename, "pdfUrl": url}
+            print(f"EQUIPAMENTO {json.dumps(equip_meta, ensure_ascii=False)}", flush=True)
             print(f"DOWNLOAD_START:{filename}:{url}", flush=True)
 
             # Download para arquivo temporário
@@ -487,17 +542,31 @@ class AnvisaB2Downloader:
             if self.b2_manager:
                 date_prefix = datetime.now().strftime('%Y/%m/%d')
                 b2_path = f"manuais/{date_prefix}/{filename}"
+                meta_path = f"manuais/{date_prefix}/{filename}.meta.json"
                 print(f"UPLOAD_B2:{filename}", flush=True)
-                
-                metadata = {
-                    'original_url': url,
-                    'download_date': datetime.now().isoformat(),
+
+                equip_meta["b2MetaKey"] = meta_path
+                meta_file = self.output_dir / f"{filename}.meta.json"
+                with open(meta_file, "w", encoding="utf-8") as mf:
+                    json.dump(equip_meta, mf, indent=2, ensure_ascii=False)
+
+                b2_tags = {
+                    "original_url": url,
+                    "download_date": datetime.now().isoformat(),
+                    "processo": str(equip_meta.get("processo", "")),
+                    "numero_registro": str(equip_meta.get("numeroRegistro", "")),
                 }
-                
-                if self.b2_manager.upload_file(temp_file, b2_path, metadata):
+
+                if self.b2_manager.upload_file(temp_file, b2_path, b2_tags):
                     self.progress["uploaded_files"] += 1
                     self.progress["uploaded_b2_files"].append(b2_path)
                     logger.info(f"Upload B2 concluído: {b2_path}")
+                    if meta_file.exists():
+                        self.b2_manager.upload_file(
+                            meta_file,
+                            meta_path,
+                            {"tipo": "metadata", "processo": str(equip_meta.get("processo", ""))},
+                        )
                     print(f"COMPLETED:{filename}:{b2_path}", flush=True)
                 else:
                     logger.error(f"Falha ao fazer upload para B2: {b2_path}")
@@ -516,11 +585,15 @@ class AnvisaB2Downloader:
             self.progress["failed_urls"].append(url)
             return False
         finally:
-            # Limpar arquivo temporário
             if temp_file and temp_file.exists():
                 try:
                     temp_file.unlink()
-                except:
+                except OSError:
+                    pass
+            if meta_file and meta_file.exists():
+                try:
+                    meta_file.unlink()
+                except OSError:
                     pass
     
     def process_urls(self, urls: List[str]):
