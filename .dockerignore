@@ -1,0 +1,6 @@
+dashboard/node_modules
+dashboard/.manus-logs
+dashboard/dist
+dashboard/.env
+dashboard/.env.*
+*.log

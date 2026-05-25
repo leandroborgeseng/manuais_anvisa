@@ -1,0 +1,60 @@
+# Logs
+*.log
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Progress files
+progress_*.json
+manifest_*.json
+
+# Temporary files
+/tmp/
+*.tmp
+*.temp
+
+# Downloads
+downloads/
+/tmp/anvisa_download/
+
+# Railway
+.railway/
+
+# Backblaze
+.b2/

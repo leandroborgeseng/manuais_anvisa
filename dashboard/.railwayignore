@@ -1,0 +1,5 @@
+node_modules
+.manus-logs
+*.log
+.env
+.env.*
