@@ -6,17 +6,26 @@ WORKDIR /app
 # Install pnpm
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
-# Copy package files from dashboard/
-COPY dashboard/package.json dashboard/pnpm-lock.yaml ./
+# Copy package files first for better layer caching
+COPY dashboard/package.json ./package.json
+COPY dashboard/pnpm-lock.yaml ./pnpm-lock.yaml
 COPY dashboard/patches/ ./patches/
 
-# Install all dependencies (including dev, needed for build)
+# Install all dependencies (dev included — needed for build)
 RUN pnpm install --frozen-lockfile
 
-# Copy full dashboard source
-COPY dashboard/ .
+# Copy the full dashboard source preserving its internal structure
+# vite.config.ts uses import.meta.dirname so paths must stay relative
+COPY dashboard/client/ ./client/
+COPY dashboard/server/ ./server/
+COPY dashboard/shared/ ./shared/
+COPY dashboard/drizzle/ ./drizzle/
+COPY dashboard/vite.config.ts ./vite.config.ts
+COPY dashboard/tsconfig.json ./tsconfig.json
+COPY dashboard/components.json ./components.json
+COPY dashboard/drizzle.config.ts ./drizzle.config.ts
 
-# Build: Vite outputs to dist/public, esbuild outputs server to dist/index.js
+# Build: Vite → dist/public  |  esbuild → dist/index.js
 RUN pnpm build
 
 # ── Production stage ──────────────────────────────────────────────────────────
@@ -28,14 +37,15 @@ WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
 # Copy package files and install production deps only
-COPY dashboard/package.json dashboard/pnpm-lock.yaml ./
+COPY dashboard/package.json ./package.json
+COPY dashboard/pnpm-lock.yaml ./pnpm-lock.yaml
 COPY dashboard/patches/ ./patches/
 RUN pnpm install --frozen-lockfile --prod
 
-# Copy built output from builder
+# Copy built output from builder stage
 COPY --from=builder /app/dist ./dist
 
-# Railway injects PORT at runtime — the server reads process.env.PORT
+# Railway injects PORT at runtime
 ENV NODE_ENV=production
 
 EXPOSE 3000
