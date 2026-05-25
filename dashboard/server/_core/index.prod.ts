@@ -23,12 +23,10 @@ async function startServer() {
   registerStorageProxy(app);
   registerOAuthRoutes(app);
 
-  // Railway health check (simple GET, no tRPC required)
   app.get("/health", (_req, res) => {
     res.status(200).json({ ok: true, service: "anvisa-dashboard" });
   });
 
-  // ─── SSE endpoint for real-time updates ────────────────────────────────────
   app.get("/api/sse/updates", (req, res) => {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -54,7 +52,6 @@ async function startServer() {
     });
   });
 
-  // tRPC API
   app.use(
     "/api/trpc",
     createExpressMiddleware({
@@ -63,20 +60,13 @@ async function startServer() {
     })
   );
 
-  if (process.env.NODE_ENV === "development") {
-    const { setupVite } = await import("./vite");
-    await setupVite(app, server);
-  } else {
-    serveStatic(app);
-  }
+  serveStatic(app);
 
-  // Railway injects PORT; must listen on 0.0.0.0 (all interfaces)
   const port = parseInt(process.env.PORT || "3000", 10);
   const host = "0.0.0.0";
 
   server.listen(port, host, () => {
     console.log(`=== Server listening on ${host}:${port} ===`);
-    console.log(`=== Access via http://localhost:${port}/ ===`);
   });
 
   server.on("error", (err) => {

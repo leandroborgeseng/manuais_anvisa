@@ -8,7 +8,7 @@ WORKDIR /build
 
 RUN pnpm install --frozen-lockfile
 RUN pnpm vite build --config vite.config.production.ts && \
-    pnpm esbuild server/_core/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist
+    pnpm esbuild server/_core/index.prod.ts --platform=node --packages=external --bundle --format=esm --outfile=dist/index.js
 
 # ── Production stage (Node + Python) ──────────────────────────────────────────
 FROM node:22-alpine AS runner
