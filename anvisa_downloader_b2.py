@@ -36,8 +36,8 @@ import argparse
 import re
 from pathlib import Path
 from datetime import datetime
-from urllib.parse import urljoin, quote, urlparse
-from typing import List, Dict, Optional, Set, Tuple
+from urllib.parse import urljoin, quote, unquote, urlparse
+from typing import Callable, List, Dict, Optional, Set, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import tempfile
 
@@ -291,7 +291,11 @@ class AnvisaB2Downloader:
             return False
         return tipo == "PDF" or ".pdf" in nome
 
-    def search_anvisa_pdfs(self, max_results: int = 100) -> List[str]:
+    def search_anvisa_pdfs(
+        self,
+        max_results: int = 100,
+        on_manual: Optional[Callable[[str, Dict], None]] = None,
+    ) -> List[str]:
         """
         Busca PDFs de manuais via API oficial da ANVISA (consultas.anvisa.gov.br).
 
@@ -350,6 +354,9 @@ class AnvisaB2Downloader:
                             logger.info(
                                 f"Manual encontrado: {manual['metadata'].get('nomeProduto', processo)} -> {url}"
                             )
+                            if on_manual:
+                                on_manual(url, manual["metadata"])
+                            print(f"TOTAL_FOUND:{len(urls)}", flush=True)
                             if len(urls) >= max_results:
                                 break
 
@@ -382,7 +389,8 @@ class AnvisaB2Downloader:
             time.sleep(0.5)
 
         logger.info(f"Total de URLs encontradas: {len(urls)}")
-        print(f"TOTAL_FOUND:{len(urls)}", flush=True)
+        if not on_manual:
+            print(f"TOTAL_FOUND:{len(urls)}", flush=True)
         return urls[:max_results]
 
     def _search_anvisa_products(
@@ -547,7 +555,18 @@ class AnvisaB2Downloader:
 
         return urls[:max_results]
     
-    def download_and_upload_file(self, url: str) -> bool:
+    def _filename_from_url(self, url: str) -> str:
+        parsed_url = urlparse(url)
+        filename = unquote(os.path.basename(parsed_url.path))
+        if not filename or not filename.lower().endswith(".pdf"):
+            filename = f"manual_{int(time.time())}.pdf"
+        return self._sanitize_filename(filename)
+
+    def _emit_equipamento(self, url: str, filename: str) -> None:
+        equip_meta = {**self.manual_metadata.get(url, {}), "pdfFilename": filename, "pdfUrl": url}
+        print(f"EQUIPAMENTO {json.dumps(equip_meta, ensure_ascii=False)}", flush=True)
+
+    def download_and_upload_file(self, url: str, *, skip_announce: bool = False) -> bool:
         """
         Faz download de um arquivo e faz upload para B2.
         
@@ -568,15 +587,11 @@ class AnvisaB2Downloader:
             
             logger.info(f"Processando: {url}")
 
-            # Extrair nome do arquivo da URL antes do download
-            parsed_url = urlparse(url)
-            filename = os.path.basename(parsed_url.path)
-            if not filename or not filename.lower().endswith(".pdf"):
-                filename = f"manual_{int(time.time())}.pdf"
-            filename = self._sanitize_filename(filename)
+            filename = self._filename_from_url(url)
             equip_meta = {**self.manual_metadata.get(url, {}), "pdfFilename": filename, "pdfUrl": url}
-            print(f"EQUIPAMENTO {json.dumps(equip_meta, ensure_ascii=False)}", flush=True)
-            print(f"DOWNLOAD_START:{filename}:{url}", flush=True)
+            if not skip_announce:
+                print(f"EQUIPAMENTO {json.dumps(equip_meta, ensure_ascii=False)}", flush=True)
+                print(f"DOWNLOAD_START:{filename}:{url}", flush=True)
 
             # Download para arquivo temporário
             response = self.session.get(url, timeout=60, stream=True, allow_redirects=True)
@@ -632,6 +647,8 @@ class AnvisaB2Downloader:
                             meta_path,
                             {"tipo": "metadata", "processo": str(equip_meta.get("processo", ""))},
                         )
+                    equip_meta["b2MetaKey"] = meta_path
+                    print(f"EQUIPAMENTO {json.dumps(equip_meta, ensure_ascii=False)}", flush=True)
                     print(f"COMPLETED:{filename}:{b2_path}", flush=True)
                 else:
                     logger.error(f"Falha ao fazer upload para B2: {b2_path}")
@@ -730,18 +747,33 @@ class AnvisaB2Downloader:
         logger.info("=" * 60)
         
         try:
-            # Buscar URLs
-            urls = self.search_anvisa_pdfs(max_results=self.max_files or 100)
-            
-            if not urls:
+            collected: List[str] = []
+            pending_futures = []
+
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+
+                def queue_manual(url: str, _metadata: Dict) -> None:
+                    filename = self._filename_from_url(url)
+                    self._emit_equipamento(url, filename)
+                    print(f"DOWNLOAD_START:{filename}:{url}", flush=True)
+                    pending_futures.append(
+                        executor.submit(self.download_and_upload_file, url, skip_announce=True)
+                    )
+
+                collected = self.search_anvisa_pdfs(
+                    max_results=self.max_files or 100,
+                    on_manual=queue_manual,
+                )
+
+            if not collected:
                 logger.warning("Nenhuma URL encontrada")
                 return
-            
-            # Processar URLs
-            self.process_urls(urls)
-            
-            # Gerar manifesto
-            self.generate_manifest(urls)
+
+            logger.info(f"Aguardando {len(pending_futures)} downloads em andamento...")
+            for future in as_completed(pending_futures):
+                future.result()
+
+            self.generate_manifest(collected)
             
             logger.info("=" * 60)
             logger.info("Download concluído com sucesso!")

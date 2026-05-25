@@ -10,6 +10,7 @@ import {
   listDownloadsByExecution,
   updateDownload,
   updateExecution,
+  linkEquipamentoToDownloadByFilename,
   upsertEquipamentoFromPayload,
 } from "./db";
 
@@ -73,6 +74,8 @@ class ProcessManager extends EventEmitter {
   private speedSamples: number[] = [];
   private lastBytesTime = Date.now();
   private lastBytes = 0;
+  private stdoutBuffer = "";
+  private stderrBuffer = "";
 
   getStats(): DashboardStats {
     return { ...this.stats };
@@ -94,6 +97,8 @@ class ProcessManager extends EventEmitter {
     // Create execution record
     const execId = await createExecution();
     this.executionId = execId;
+    this.stdoutBuffer = "";
+    this.stderrBuffer = "";
     this.status = "running";
     this.stats = {
       status: "running",
@@ -146,11 +151,11 @@ class ProcessManager extends EventEmitter {
     }
 
     this.process.stdout?.on("data", (data: Buffer) => {
-      this.handleOutput(data.toString(), execId);
+      void this.feedProcessOutput(data.toString(), execId, "stdout");
     });
 
     this.process.stderr?.on("data", (data: Buffer) => {
-      this.handleOutput(data.toString(), execId, "WARNING");
+      void this.feedProcessOutput(data.toString(), execId, "stderr");
     });
 
     this.process.on("close", (code) => {
@@ -233,6 +238,50 @@ class ProcessManager extends EventEmitter {
     return { success: true, message: "Download adicionado à fila novamente." };
   }
 
+  private async feedProcessOutput(
+    chunk: string,
+    execId: number,
+    stream: "stdout" | "stderr"
+  ) {
+    if (stream === "stdout") {
+      this.stdoutBuffer += chunk;
+      const lines = this.stdoutBuffer.split(/\r?\n/);
+      this.stdoutBuffer = lines.pop() ?? "";
+      for (const line of lines) {
+        await this.handleOutput(line, execId, "INFO");
+      }
+      return;
+    }
+
+    this.stderrBuffer += chunk;
+    const lines = this.stderrBuffer.split(/\r?\n/);
+    this.stderrBuffer = lines.pop() ?? "";
+    for (const line of lines) {
+      await this.handleOutput(line, execId, "WARNING");
+    }
+  }
+
+  private async handleEquipamentoJson(execId: number, jsonPart: string) {
+    try {
+      const payload = JSON.parse(jsonPart) as Record<string, unknown>;
+      await upsertEquipamentoFromPayload(execId, payload);
+      const pdfFilename = payload.pdfFilename ? String(payload.pdfFilename) : undefined;
+      if (pdfFilename) {
+        const item = this.stats.downloads.find((d) => d.filename === pdfFilename);
+        if (item) {
+          item.equipamento = this.toEquipamentoInfo(payload);
+        }
+      }
+    } catch (err) {
+      await insertLog({
+        executionId: execId,
+        level: "WARNING",
+        message: `Falha ao salvar metadados do equipamento: ${err}`,
+      });
+    }
+    this.emitUpdate();
+  }
+
   private async handleOutput(line: string, execId: number, defaultLevel: "INFO" | "WARNING" | "ERROR" = "INFO") {
     const trimmed = line.trim();
     if (!trimmed) return;
@@ -244,25 +293,9 @@ class ProcessManager extends EventEmitter {
 
     await insertLog({ executionId: execId, level, message: trimmed });
 
-    if (trimmed.startsWith("EQUIPAMENTO ")) {
-      try {
-        const payload = JSON.parse(trimmed.slice("EQUIPAMENTO ".length)) as Record<string, unknown>;
-        await upsertEquipamentoFromPayload(execId, payload);
-        const pdfFilename = payload.pdfFilename ? String(payload.pdfFilename) : undefined;
-        if (pdfFilename) {
-          const item = this.stats.downloads.find((d) => d.filename === pdfFilename);
-          if (item) {
-            item.equipamento = this.toEquipamentoInfo(payload);
-          }
-        }
-      } catch (err) {
-        await insertLog({
-          executionId: execId,
-          level: "WARNING",
-          message: `Falha ao salvar metadados do equipamento: ${err}`,
-        });
-      }
-      this.emitUpdate();
+    const equipIdx = trimmed.indexOf("EQUIPAMENTO ");
+    if (equipIdx >= 0) {
+      await this.handleEquipamentoJson(execId, trimmed.slice(equipIdx + "EQUIPAMENTO ".length));
       return;
     }
 
@@ -318,6 +351,7 @@ class ProcessManager extends EventEmitter {
           status: "baixando",
         });
         item.id = dbId;
+        await linkEquipamentoToDownloadByFilename(execId, filename, dbId).catch(() => undefined);
       } catch {
         /* DB opcional */
       }

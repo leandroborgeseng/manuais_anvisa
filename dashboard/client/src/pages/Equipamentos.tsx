@@ -14,10 +14,15 @@ function formatDate(value?: Date | string | null) {
 export default function Equipamentos() {
   const { stats } = useSSE();
   const [search, setSearch] = useState("");
-  const { data, isLoading } = trpc.equipamentos.list.useQuery({
-    executionId: stats.executionId ?? undefined,
-    limit: 500,
-  });
+  const { data, isLoading } = trpc.equipamentos.list.useQuery(
+    {
+      executionId: stats.status === "running" ? stats.executionId ?? undefined : undefined,
+      limit: 500,
+    },
+    {
+      refetchInterval: stats.status === "running" ? 3000 : false,
+    }
+  );
 
   const filtered = (data ?? []).filter((eq) => {
     if (!search) return true;

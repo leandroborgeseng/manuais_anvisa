@@ -313,6 +313,33 @@ export async function linkEquipamentoToDownload(
     .where(eq(equipamentos.id, equipamentoId));
 }
 
+export async function linkEquipamentoToDownloadByFilename(
+  executionId: number,
+  pdfFilename: string,
+  downloadId: number
+): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+
+  const rows = await db
+    .select()
+    .from(equipamentos)
+    .where(eq(equipamentos.executionId, executionId));
+
+  for (const row of rows) {
+    if (!row.metadataJson) continue;
+    try {
+      const meta = JSON.parse(row.metadataJson) as { pdfFilename?: string };
+      if (meta.pdfFilename === pdfFilename) {
+        await linkEquipamentoToDownload(row.id, downloadId);
+        return;
+      }
+    } catch {
+      /* ignore invalid json */
+    }
+  }
+}
+
 export async function listEquipamentos(
   executionId?: number,
   limit = 200
