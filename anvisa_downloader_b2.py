@@ -44,6 +44,7 @@ import tempfile
 
 try:
     import requests
+    import certifi
     from requests.adapters import HTTPAdapter
     from urllib3.util.retry import Retry
     from bs4 import BeautifulSoup
@@ -527,6 +528,37 @@ class AnvisaB2Downloader:
         logger.warning(f"ANVISA_SCAN_MODE desconhecido ({scan_mode}), usando open_data")
         return self._search_open_data_catalog(max_results, on_manual)
 
+    def _open_data_verify_ssl(self) -> bool:
+        return os.getenv("ANVISA_OPEN_DATA_VERIFY_SSL", "false").lower() not in (
+            "0",
+            "false",
+            "no",
+        )
+
+    def _fetch_open_data_csv(self, csv_url: str) -> requests.Response:
+        """Baixa CSV de dados abertos (certificado ANVISA costuma falhar em containers)."""
+        headers = {"User-Agent": self.session.headers.get("User-Agent", "")}
+        verify = certifi.where() if self._open_data_verify_ssl() else False
+
+        try:
+            response = requests.get(
+                csv_url, timeout=300, verify=verify, stream=True, headers=headers
+            )
+            response.raise_for_status()
+            return response
+        except requests.exceptions.SSLError as exc:
+            if not verify:
+                raise
+            logger.warning(
+                f"SSL de dados.anvisa.gov.br rejeitado ({exc}); "
+                "tentando download sem verificação de certificado"
+            )
+            response = requests.get(
+                csv_url, timeout=300, verify=False, stream=True, headers=headers
+            )
+            response.raise_for_status()
+            return response
+
     def _download_open_data_csv(self, csv_url: str, cache_path: Path) -> Path:
         """Baixa CSV de dados abertos ANVISA (com cache local)."""
         ttl_hours = int(os.getenv("ANVISA_OPEN_DATA_CACHE_HOURS", "24"))
@@ -537,13 +569,7 @@ class AnvisaB2Downloader:
                 return cache_path
 
         logger.info(f"Baixando dados abertos ANVISA: {csv_url}")
-        verify_ssl = os.getenv("ANVISA_OPEN_DATA_VERIFY_SSL", "true").lower() not in (
-            "0",
-            "false",
-            "no",
-        )
-        response = self.session.get(csv_url, timeout=300, verify=verify_ssl, stream=True)
-        response.raise_for_status()
+        response = self._fetch_open_data_csv(csv_url)
 
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = cache_path.with_suffix(".tmp")
@@ -606,8 +632,8 @@ class AnvisaB2Downloader:
             csv_path = self._download_open_data_csv(csv_url, cache_path)
         except Exception as e:
             logger.error(f"Falha ao baixar CSV de dados abertos: {e}")
-            logger.info("Tentando modo termos (legado) como fallback...")
-            return self._search_by_terms(max_results, on_manual)
+            print(f"ERROR:CSV_DOWNLOAD:{e}", flush=True)
+            return []
 
         equipment_checked = 0
         rows_read = 0

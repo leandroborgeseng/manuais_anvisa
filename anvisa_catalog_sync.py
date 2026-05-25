@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Optional
 
 try:
     import requests
+    import certifi
     from requests.adapters import HTTPAdapter
     from urllib3.util.retry import Retry
 except ImportError:
@@ -118,6 +119,31 @@ class AnvisaCatalogSync:
             os.getenv("ANVISA_OPEN_DATA_CACHE", "/tmp/ta_produto_saude_site.csv")
         )
 
+    def _fetch_csv_response(self) -> requests.Response:
+        headers = {"User-Agent": self.session.headers.get("User-Agent", "")}
+        verify_env = os.getenv("ANVISA_OPEN_DATA_VERIFY_SSL", "false").lower()
+        verify_ssl = verify_env not in ("0", "false", "no")
+        verify = certifi.where() if verify_ssl else False
+
+        try:
+            response = requests.get(
+                self.csv_url, timeout=300, verify=verify, stream=True, headers=headers
+            )
+            response.raise_for_status()
+            return response
+        except requests.exceptions.SSLError as exc:
+            if not verify_ssl:
+                raise
+            logger.warning(
+                f"SSL de dados.anvisa.gov.br rejeitado ({exc}); "
+                "tentando download sem verificação de certificado"
+            )
+            response = requests.get(
+                self.csv_url, timeout=300, verify=False, stream=True, headers=headers
+            )
+            response.raise_for_status()
+            return response
+
     def _download_csv(self) -> Path:
         ttl_hours = int(os.getenv("ANVISA_OPEN_DATA_CACHE_HOURS", "24"))
         if self.cache_path.exists():
@@ -127,15 +153,7 @@ class AnvisaCatalogSync:
                 return self.cache_path
 
         logger.info(f"Baixando CSV: {self.csv_url}")
-        verify_ssl = os.getenv("ANVISA_OPEN_DATA_VERIFY_SSL", "true").lower() not in (
-            "0",
-            "false",
-            "no",
-        )
-        response = self.session.get(
-            self.csv_url, timeout=300, verify=verify_ssl, stream=True
-        )
-        response.raise_for_status()
+        response = self._fetch_csv_response()
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.cache_path.with_suffix(".tmp")
         with open(tmp, "wb") as f:

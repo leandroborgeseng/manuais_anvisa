@@ -14,7 +14,7 @@ RUN pnpm vite build --config vite.config.production.ts && \
 FROM node:22-alpine AS runner
 
 # Python for ANVISA downloader script
-RUN apk add --no-cache python3 py3-pip
+RUN apk add --no-cache python3 py3-pip ca-certificates && update-ca-certificates
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
@@ -42,6 +42,7 @@ RUN pip3 install --no-cache-dir --break-system-packages -r /app/scripts/requirem
 ENV NODE_ENV=production
 ENV ANVISA_SCRIPT_PATH=/app/scripts/anvisa_downloader_b2.py
 ENV ANVISA_CATALOG_SCRIPT_PATH=/app/scripts/anvisa_catalog_sync.py
+ENV ANVISA_OPEN_DATA_VERIFY_SSL=false
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 3000
