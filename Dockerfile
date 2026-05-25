@@ -1,36 +1,43 @@
-FROM python:3.11-slim
+# ── Build stage ──────────────────────────────────────────────────────────────
+FROM node:22-alpine AS builder
 
-# Definir diretório de trabalho
 WORKDIR /app
 
-# Instalar dependências do sistema
-RUN apt-get update && apt-get install -y \
-    curl \
-    git \
-    && rm -rf /var/lib/apt/lists/*
+# Install pnpm
+RUN corepack enable && corepack prepare pnpm@latest --activate
 
-# Copiar requirements
-COPY requirements.txt .
+# Copy package files from dashboard/
+COPY dashboard/package.json dashboard/pnpm-lock.yaml ./
+COPY dashboard/patches/ ./patches/
 
-# Instalar dependências Python
-RUN pip install --no-cache-dir -r requirements.txt
+# Install all dependencies (including dev, needed for build)
+RUN pnpm install --frozen-lockfile
 
-# Copiar scripts
-COPY anvisa_downloader_b2.py .
-COPY anvisa_downloader_google.py .
-COPY anvisa_downloader_s3.py .
-COPY schedule_anvisa_download.sh .
+# Copy full dashboard source
+COPY dashboard/ .
 
-# Criar diretórios
-RUN mkdir -p /app/downloads /app/logs
+# Build: Vite outputs to dist/public, esbuild outputs server to dist/index.js
+RUN pnpm build
 
-# Tornar scripts executáveis
-RUN chmod +x anvisa_downloader_b2.py anvisa_downloader_google.py anvisa_downloader_s3.py schedule_anvisa_download.sh
+# ── Production stage ──────────────────────────────────────────────────────────
+FROM node:22-alpine AS runner
 
-# Definir variáveis de ambiente padrão
-ENV PYTHONUNBUFFERED=1
-ENV OUTPUT_DIR=/tmp/anvisa_download
-ENV LOG_LEVEL=INFO
+WORKDIR /app
 
-# Comando padrão (usar script B2)
-CMD ["python3", "anvisa_downloader_b2.py", "--output-dir", "/tmp/anvisa_download"]
+# Install pnpm
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+# Copy package files and install production deps only
+COPY dashboard/package.json dashboard/pnpm-lock.yaml ./
+COPY dashboard/patches/ ./patches/
+RUN pnpm install --frozen-lockfile --prod
+
+# Copy built output from builder
+COPY --from=builder /app/dist ./dist
+
+# Railway injects PORT at runtime — the server reads process.env.PORT
+ENV NODE_ENV=production
+
+EXPOSE 3000
+
+CMD ["node", "dist/index.js"]
