@@ -44,7 +44,7 @@ pnpm dev
 2. Acesse [railway.app](https://railway.app) → **New Project** → **Deploy from GitHub**
 3. Selecione o repositório `manuais_anvisa` (raiz do projeto — **não** a pasta `dashboard`)
 4. Adicione um plugin **MySQL** ao projeto e copie a `DATABASE_URL` gerada
-5. Configure as variáveis de ambiente (veja `.env.example` e `SETUP_RAILWAY_B2.md`):
+5. Configure as variáveis de ambiente (veja `.env.example`, `RAILWAY_DEPLOY.md` e `SETUP_RAILWAY_B2.md`):
 
 | Variável | Obrigatória | Descrição |
 |----------|-------------|-----------|

@@ -89,12 +89,6 @@ class ProcessManager extends EventEmitter {
       downloads: [],
     };
 
-    await insertLog({
-      executionId: execId,
-      level: "INFO",
-      message: `Iniciando processo de download. MAX_FILES=${maxFiles}, WORKERS=${maxWorkers}, SCRIPT=${scriptPath}`,
-    });
-
     // Find script path (Railway Docker vs local dev)
     const scriptPath =
       process.env.ANVISA_SCRIPT_PATH ??
@@ -106,6 +100,12 @@ class ProcessManager extends EventEmitter {
         ];
         return candidates.find((candidate) => fs.existsSync(candidate)) ?? candidates[0];
       })();
+
+    await insertLog({
+      executionId: execId,
+      level: "INFO",
+      message: `Iniciando processo de download. MAX_FILES=${maxFiles}, WORKERS=${maxWorkers}, SCRIPT=${scriptPath}`,
+    });
 
     const env = {
       ...process.env,
