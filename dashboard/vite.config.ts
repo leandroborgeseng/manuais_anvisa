@@ -4,7 +4,19 @@ import react from "@vitejs/plugin-react";
 import fs from "node:fs";
 import path from "node:path";
 import { defineConfig, type Plugin, type ViteDevServer } from "vite";
-import { vitePluginManusRuntime } from "vite-plugin-manus-runtime";
+
+// vite-plugin-manus-runtime is only available in the Manus sandbox.
+// Use a dynamic import so it is never loaded in Railway/Docker builds.
+const isManus = process.env.VITE_APP_ID !== undefined;
+let vitePluginManusRuntime: (() => Plugin) | null = null;
+if (isManus) {
+  try {
+    const mod = await import("vite-plugin-manus-runtime");
+    vitePluginManusRuntime = mod.vitePluginManusRuntime;
+  } catch {
+    // not available outside Manus
+  }
+}
 
 // =============================================================================
 // Manus Debug Collector - Vite Plugin
@@ -150,14 +162,11 @@ function vitePluginManusDebugCollector(): Plugin {
   };
 }
 
-// vitePluginManusRuntime is only available in the Manus sandbox environment.
-// In production (Railway/Docker) it must be excluded to avoid module resolution errors.
-const isManus = process.env.VITE_APP_ID !== undefined;
 const plugins = [
   react(),
   tailwindcss(),
   jsxLocPlugin(),
-  ...(isManus ? [vitePluginManusRuntime()] : []),
+  ...(vitePluginManusRuntime ? [vitePluginManusRuntime()] : []),
   vitePluginManusDebugCollector(),
 ];
 
