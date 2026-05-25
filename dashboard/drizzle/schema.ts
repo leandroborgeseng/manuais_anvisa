@@ -1,40 +1,58 @@
 import {
   bigint,
-  float,
-  int,
-  mysqlEnum,
-  mysqlTable,
+  integer,
+  pgEnum,
+  pgTable,
+  real,
+  serial,
   text,
   timestamp,
   varchar,
-} from "drizzle-orm/mysql-core";
+} from "drizzle-orm/pg-core";
 
-export const users = mysqlTable("users", {
-  id: int("id").autoincrement().primaryKey(),
+export const roleEnum = pgEnum("role", ["user", "admin"]);
+export const executionStatusEnum = pgEnum("execution_status", [
+  "running",
+  "paused",
+  "stopped",
+  "completed",
+  "error",
+]);
+export const downloadStatusEnum = pgEnum("download_status", [
+  "aguardando",
+  "baixando",
+  "enviando para B2",
+  "concluído",
+  "erro",
+]);
+export const logLevelEnum = pgEnum("log_level", ["INFO", "WARNING", "ERROR"]);
+
+export const users = pgTable("users", {
+  id: serial("id").primaryKey(),
   openId: varchar("openId", { length: 64 }).notNull().unique(),
   name: text("name"),
   email: varchar("email", { length: 320 }),
   loginMethod: varchar("loginMethod", { length: 64 }),
-  role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-  lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
+  role: roleEnum("role").default("user").notNull(),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { mode: "date" })
+    .defaultNow()
+    .notNull()
+    .$onUpdateFn(() => new Date()),
+  lastSignedIn: timestamp("lastSignedIn", { mode: "date" }).defaultNow().notNull(),
 });
 
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
-// Execuções do processo de download
-export const executions = mysqlTable("executions", {
-  id: int("id").autoincrement().primaryKey(),
-  startedAt: timestamp("startedAt").defaultNow().notNull(),
-  finishedAt: timestamp("finishedAt"),
-  status: mysqlEnum("status", ["running", "paused", "stopped", "completed", "error"])
-    .default("running")
-    .notNull(),
-  totalFound: int("totalFound").default(0).notNull(),
-  totalCompleted: int("totalCompleted").default(0).notNull(),
-  totalErrors: int("totalErrors").default(0).notNull(),
+export const executions = pgTable("executions", {
+  id: serial("id").primaryKey(),
+  startedAt: timestamp("startedAt", { mode: "date" }).defaultNow().notNull(),
+  finishedAt: timestamp("finishedAt", { mode: "date" }),
+  status: executionStatusEnum("status").default("running").notNull(),
+  totalFound: integer("totalFound").default(0).notNull(),
+  totalCompleted: integer("totalCompleted").default(0).notNull(),
+  totalErrors: integer("totalErrors").default(0).notNull(),
   manifestKey: varchar("manifestKey", { length: 512 }),
   manifestUrl: varchar("manifestUrl", { length: 1024 }),
 });
@@ -42,48 +60,49 @@ export const executions = mysqlTable("executions", {
 export type Execution = typeof executions.$inferSelect;
 export type InsertExecution = typeof executions.$inferInsert;
 
-// Downloads individuais
-export const downloads = mysqlTable("downloads", {
-  id: int("id").autoincrement().primaryKey(),
-  executionId: int("executionId").notNull(),
+export const downloads = pgTable("downloads", {
+  id: serial("id").primaryKey(),
+  executionId: integer("executionId").notNull(),
   filename: varchar("filename", { length: 512 }).notNull(),
   url: text("url").notNull(),
-  status: mysqlEnum("status", ["aguardando", "baixando", "enviando para B2", "concluído", "erro"])
-    .default("aguardando")
-    .notNull(),
-  progress: float("progress").default(0).notNull(),
+  status: downloadStatusEnum("status").default("aguardando").notNull(),
+  progress: real("progress").default(0).notNull(),
   sizeBytes: bigint("sizeBytes", { mode: "number" }).default(0).notNull(),
   b2Key: varchar("b2Key", { length: 512 }),
   errorMessage: text("errorMessage"),
-  startedAt: timestamp("startedAt"),
-  completedAt: timestamp("completedAt"),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  startedAt: timestamp("startedAt", { mode: "date" }),
+  completedAt: timestamp("completedAt", { mode: "date" }),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { mode: "date" })
+    .defaultNow()
+    .notNull()
+    .$onUpdateFn(() => new Date()),
 });
 
 export type Download = typeof downloads.$inferSelect;
 export type InsertDownload = typeof downloads.$inferInsert;
 
-// Logs do processo
-export const logs = mysqlTable("logs", {
-  id: int("id").autoincrement().primaryKey(),
-  executionId: int("executionId"),
-  level: mysqlEnum("level", ["INFO", "WARNING", "ERROR"]).default("INFO").notNull(),
+export const logs = pgTable("logs", {
+  id: serial("id").primaryKey(),
+  executionId: integer("executionId"),
+  level: logLevelEnum("level").default("INFO").notNull(),
   message: text("message").notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
 });
 
 export type Log = typeof logs.$inferSelect;
 export type InsertLog = typeof logs.$inferInsert;
 
-// Configurações do sistema
-export const settings = mysqlTable("settings", {
-  id: int("id").autoincrement().primaryKey(),
-  maxFiles: int("maxFiles").default(100).notNull(),
-  maxWorkers: int("maxWorkers").default(4).notNull(),
+export const settings = pgTable("settings", {
+  id: serial("id").primaryKey(),
+  maxFiles: integer("maxFiles").default(100).notNull(),
+  maxWorkers: integer("maxWorkers").default(4).notNull(),
   cronExpression: varchar("cronExpression", { length: 128 }).default("0 2 1 * *").notNull(),
   b2BucketName: varchar("b2BucketName", { length: 256 }).default("anvisa-manuais").notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt", { mode: "date" })
+    .defaultNow()
+    .notNull()
+    .$onUpdateFn(() => new Date()),
 });
 
 export type Settings = typeof settings.$inferSelect;

@@ -1,5 +1,6 @@
 import { and, desc, eq, gte } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/mysql2";
+import { drizzle } from "drizzle-orm/node-postgres";
+import pg from "pg";
 import {
   Download,
   Execution,
@@ -17,15 +18,26 @@ import {
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 
+let _pool: pg.Pool | null = null;
 let _db: ReturnType<typeof drizzle> | null = null;
+
+function pgSslConfig(connectionString: string) {
+  const isLocal = /localhost|127\.0\.0\.1/.test(connectionString);
+  return isLocal ? undefined : { rejectUnauthorized: false as const };
+}
 
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
-      _db = drizzle(process.env.DATABASE_URL);
+      _pool = new pg.Pool({
+        connectionString: process.env.DATABASE_URL,
+        ssl: pgSslConfig(process.env.DATABASE_URL),
+      });
+      _db = drizzle(_pool);
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;
+      _pool = null;
     }
   }
   return _db;
@@ -65,7 +77,10 @@ export async function upsertUser(user: InsertUser): Promise<void> {
   if (!values.lastSignedIn) values.lastSignedIn = new Date();
   if (Object.keys(updateSet).length === 0) updateSet.lastSignedIn = new Date();
 
-  await db.insert(users).values(values).onDuplicateKeyUpdate({ set: updateSet });
+  await db.insert(users).values(values).onConflictDoUpdate({
+    target: users.openId,
+    set: updateSet,
+  });
 }
 
 export async function getUserByOpenId(openId: string) {
@@ -80,8 +95,11 @@ export async function getUserByOpenId(openId: string) {
 export async function createExecution(): Promise<number> {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  const result = await db.insert(executions).values({ status: "running" });
-  return (result[0] as { insertId: number }).insertId;
+  const result = await db
+    .insert(executions)
+    .values({ status: "running" })
+    .returning({ id: executions.id });
+  return result[0]!.id;
 }
 
 export async function getExecution(id: number): Promise<Execution | undefined> {
@@ -123,8 +141,8 @@ export async function listExecutions(limit = 20): Promise<Execution[]> {
 export async function createDownload(data: InsertDownload): Promise<number> {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  const result = await db.insert(downloads).values(data);
-  return (result[0] as { insertId: number }).insertId;
+  const result = await db.insert(downloads).values(data).returning({ id: downloads.id });
+  return result[0]!.id;
 }
 
 export async function updateDownload(

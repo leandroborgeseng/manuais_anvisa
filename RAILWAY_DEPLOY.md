@@ -7,16 +7,16 @@
 3. Selecione `leandroborgeseng/manuais_anvisa`
 4. Railway detecta o `Dockerfile` na raiz e inicia o build automaticamente
 
-## 2. Adicionar MySQL
+## 2. Adicionar PostgreSQL
 
-1. No projeto Railway, clique em **+ New** → **Database** → **MySQL**
-2. Após provisionar, clique no serviço MySQL → **Variables** → copie `MYSQL_URL` ou `DATABASE_URL`
+1. No projeto Railway, clique em **+ New** → **Database** → **PostgreSQL**
+2. Após provisionar, clique no serviço PostgreSQL → **Variables** → copie `DATABASE_URL`
 3. No serviço do app, adicione a variável `DATABASE_URL` com o valor copiado
 4. As migrations rodam automaticamente no startup
 
 ## 3. Variáveis de ambiente do app
 
-No serviço web (não no MySQL), em **Variables**:
+No serviço web (não no PostgreSQL), em **Variables**:
 
 ```
 JWT_SECRET=<gere com: openssl rand -hex 32>
@@ -45,6 +45,7 @@ MAX_WORKERS=4
 | Build falha no `pnpm install` | Verifique se `pnpm-lock.yaml` está commitado |
 | Health check timeout | Aguarde migrations; confira `DATABASE_URL` |
 | Downloads em simulação | Configure B2 e verifique logs do script Python |
-| Erro de migration | Confira se MySQL está no mesmo projeto e acessível |
+| Erro de migration | Confira se PostgreSQL está no mesmo projeto e acessível |
+| Erro SSL no Postgres | Railway exige SSL; o app já configura automaticamente |
 
 Veja também: `SETUP_RAILWAY_B2.md` e `.env.example`

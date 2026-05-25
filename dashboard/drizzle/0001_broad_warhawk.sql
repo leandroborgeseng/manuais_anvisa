@@ -1,48 +1,47 @@
-CREATE TABLE `downloads` (
-	`id` int AUTO_INCREMENT NOT NULL,
-	`executionId` int NOT NULL,
-	`filename` varchar(512) NOT NULL,
-	`url` text NOT NULL,
-	`status` enum('aguardando','baixando','enviando para B2','concluído','erro') NOT NULL DEFAULT 'aguardando',
-	`progress` float NOT NULL DEFAULT 0,
-	`sizeBytes` bigint NOT NULL DEFAULT 0,
-	`b2Key` varchar(512),
-	`errorMessage` text,
-	`startedAt` timestamp,
-	`completedAt` timestamp,
-	`createdAt` timestamp NOT NULL DEFAULT (now()),
-	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
-	CONSTRAINT `downloads_id` PRIMARY KEY(`id`)
+CREATE TYPE "download_status" AS ENUM('aguardando', 'baixando', 'enviando para B2', 'concluído', 'erro');--> statement-breakpoint
+CREATE TYPE "execution_status" AS ENUM('running', 'paused', 'stopped', 'completed', 'error');--> statement-breakpoint
+CREATE TYPE "log_level" AS ENUM('INFO', 'WARNING', 'ERROR');--> statement-breakpoint
+CREATE TABLE "downloads" (
+	"id" serial PRIMARY KEY NOT NULL,
+	"executionId" integer NOT NULL,
+	"filename" varchar(512) NOT NULL,
+	"url" text NOT NULL,
+	"status" "download_status" DEFAULT 'aguardando' NOT NULL,
+	"progress" real DEFAULT 0 NOT NULL,
+	"sizeBytes" bigint DEFAULT 0 NOT NULL,
+	"b2Key" varchar(512),
+	"errorMessage" text,
+	"startedAt" timestamp,
+	"completedAt" timestamp,
+	"createdAt" timestamp DEFAULT now() NOT NULL,
+	"updatedAt" timestamp DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE `executions` (
-	`id` int AUTO_INCREMENT NOT NULL,
-	`startedAt` timestamp NOT NULL DEFAULT (now()),
-	`finishedAt` timestamp,
-	`status` enum('running','paused','stopped','completed','error') NOT NULL DEFAULT 'running',
-	`totalFound` int NOT NULL DEFAULT 0,
-	`totalCompleted` int NOT NULL DEFAULT 0,
-	`totalErrors` int NOT NULL DEFAULT 0,
-	`manifestKey` varchar(512),
-	`manifestUrl` varchar(1024),
-	CONSTRAINT `executions_id` PRIMARY KEY(`id`)
+CREATE TABLE "executions" (
+	"id" serial PRIMARY KEY NOT NULL,
+	"startedAt" timestamp DEFAULT now() NOT NULL,
+	"finishedAt" timestamp,
+	"status" "execution_status" DEFAULT 'running' NOT NULL,
+	"totalFound" integer DEFAULT 0 NOT NULL,
+	"totalCompleted" integer DEFAULT 0 NOT NULL,
+	"totalErrors" integer DEFAULT 0 NOT NULL,
+	"manifestKey" varchar(512),
+	"manifestUrl" varchar(1024)
 );
 --> statement-breakpoint
-CREATE TABLE `logs` (
-	`id` int AUTO_INCREMENT NOT NULL,
-	`executionId` int,
-	`level` enum('INFO','WARNING','ERROR') NOT NULL DEFAULT 'INFO',
-	`message` text NOT NULL,
-	`createdAt` timestamp NOT NULL DEFAULT (now()),
-	CONSTRAINT `logs_id` PRIMARY KEY(`id`)
+CREATE TABLE "logs" (
+	"id" serial PRIMARY KEY NOT NULL,
+	"executionId" integer,
+	"level" "log_level" DEFAULT 'INFO' NOT NULL,
+	"message" text NOT NULL,
+	"createdAt" timestamp DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE `settings` (
-	`id` int AUTO_INCREMENT NOT NULL,
-	`maxFiles` int NOT NULL DEFAULT 100,
-	`maxWorkers` int NOT NULL DEFAULT 4,
-	`cronExpression` varchar(128) NOT NULL DEFAULT '0 2 1 * *',
-	`b2BucketName` varchar(256) NOT NULL DEFAULT 'anvisa-manuais',
-	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
-	CONSTRAINT `settings_id` PRIMARY KEY(`id`)
+CREATE TABLE "settings" (
+	"id" serial PRIMARY KEY NOT NULL,
+	"maxFiles" integer DEFAULT 100 NOT NULL,
+	"maxWorkers" integer DEFAULT 4 NOT NULL,
+	"cronExpression" varchar(128) DEFAULT '0 2 1 * *' NOT NULL,
+	"b2BucketName" varchar(256) DEFAULT 'anvisa-manuais' NOT NULL,
+	"updatedAt" timestamp DEFAULT now() NOT NULL
 );

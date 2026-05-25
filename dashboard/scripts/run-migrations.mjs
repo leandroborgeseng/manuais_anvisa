@@ -1,10 +1,15 @@
 import fs from "fs";
 import path from "path";
-import mysql from "mysql2/promise";
+import pg from "pg";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const drizzleDir = path.resolve(__dirname, "../drizzle");
+
+function pgSslConfig(connectionString) {
+  const isLocal = /localhost|127\.0\.0\.1/.test(connectionString);
+  return isLocal ? undefined : { rejectUnauthorized: false };
+}
 
 async function runMigrations() {
   const databaseUrl = process.env.DATABASE_URL;
@@ -13,11 +18,14 @@ async function runMigrations() {
     return;
   }
 
-  const connection = await mysql.createConnection(databaseUrl);
+  const pool = new pg.Pool({
+    connectionString: databaseUrl,
+    ssl: pgSslConfig(databaseUrl),
+  });
 
-  await connection.execute(`
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS __drizzle_migrations (
-      id INT AUTO_INCREMENT PRIMARY KEY,
+      id SERIAL PRIMARY KEY,
       tag VARCHAR(255) NOT NULL UNIQUE,
       applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
@@ -27,8 +35,8 @@ async function runMigrations() {
   const journal = JSON.parse(fs.readFileSync(journalPath, "utf-8"));
 
   for (const entry of journal.entries) {
-    const [rows] = await connection.execute(
-      "SELECT id FROM __drizzle_migrations WHERE tag = ?",
+    const { rows } = await pool.query(
+      "SELECT id FROM __drizzle_migrations WHERE tag = $1",
       [entry.tag]
     );
     if (rows.length > 0) {
@@ -45,16 +53,13 @@ async function runMigrations() {
 
     console.log(`[migrate] Applying: ${entry.tag} (${statements.length} statements)`);
     for (const stmt of statements) {
-      await connection.execute(stmt);
+      await pool.query(stmt);
     }
 
-    await connection.execute(
-      "INSERT INTO __drizzle_migrations (tag) VALUES (?)",
-      [entry.tag]
-    );
+    await pool.query("INSERT INTO __drizzle_migrations (tag) VALUES ($1)", [entry.tag]);
   }
 
-  await connection.end();
+  await pool.end();
   console.log("[migrate] Done");
 }
 

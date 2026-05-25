@@ -43,12 +43,12 @@ pnpm dev
 1. Faça fork ou clone deste repositório
 2. Acesse [railway.app](https://railway.app) → **New Project** → **Deploy from GitHub**
 3. Selecione o repositório `manuais_anvisa` (raiz do projeto — **não** a pasta `dashboard`)
-4. Adicione um plugin **MySQL** ao projeto e copie a `DATABASE_URL` gerada
+4. Adicione um plugin **PostgreSQL** ao projeto e copie a `DATABASE_URL` gerada
 5. Configure as variáveis de ambiente (veja `.env.example`, `RAILWAY_DEPLOY.md` e `SETUP_RAILWAY_B2.md`):
 
 | Variável | Obrigatória | Descrição |
 |----------|-------------|-----------|
-| `DATABASE_URL` | Sim | URL do MySQL (Railway plugin) |
+| `DATABASE_URL` | Sim | URL do PostgreSQL (Railway plugin) |
 | `JWT_SECRET` | Sim | Segredo para sessões (`openssl rand -hex 32`) |
 | `B2_APPLICATION_KEY_ID` | Para downloads reais | Chave Backblaze B2 |
 | `B2_APPLICATION_KEY` | Para downloads reais | Chave secreta B2 |
@@ -57,7 +57,7 @@ pnpm dev
 6. O deploy usa o `Dockerfile` na raiz (Node + Python + dashboard)
 7. Health check em `/health` — aguarde o build (~3–5 min na primeira vez)
 
-**Sem B2/MySQL:** o dashboard abre e roda em modo simulação para testes.
+**Sem B2/PostgreSQL:** o dashboard abre e roda em modo simulação para testes.
 
 ## Scripts Python
 
