@@ -276,7 +276,7 @@ class AnvisaB2Downloader:
             logger.error(f"Erro ao salvar progresso: {e}")
     
     def _is_manual_attachment(self, arquivo: Dict) -> bool:
-        """Verifica se o anexo é um PDF de manual/instruções."""
+        """Aceita qualquer anexo PDF — nomes na ANVISA raramente contêm 'manual'."""
         if not arquivo.get("anexoCod"):
             return False
 
@@ -285,31 +285,11 @@ class AnvisaB2Downloader:
             (arquivo.get("nomeCompleto") or "")
             + " "
             + (arquivo.get("nomeArquivo") or "")
-            + " "
-            + (arquivo.get("descricaoTipoAnexo") or "")
         ).lower()
 
-        is_pdf = tipo == "PDF" or ".pdf" in nome
         if tipo and tipo != "PDF":
             return False
-        if not is_pdf:
-            return False
-
-        if os.getenv("ANVISA_ANY_PDF", "").lower() in ("1", "true", "yes"):
-            return True
-
-        manual_keywords = (
-            "manual",
-            "instru",
-            "uso",
-            "operac",
-            "operacão",
-            "rotulo",
-            "rótulo",
-            "label",
-            "ifu",
-        )
-        return any(k in nome for k in manual_keywords) or tipo == "PDF"
+        return tipo == "PDF" or ".pdf" in nome
 
     def search_anvisa_pdfs(self, max_results: int = 100) -> List[str]:
         """
