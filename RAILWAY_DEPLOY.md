@@ -32,6 +32,26 @@ MAX_WORKERS=4
 - Logs: aba **Deployments** → clique no deploy → **View Logs**
 - Health: `https://<seu-app>.up.railway.app/health` deve retornar `{"ok":true}`
 - Dashboard: abra a URL pública gerada pelo Railway
+- Startup: nos logs deve aparecer `Railway startup (deploy v2026-05-25)`
+
+## Watch paths (deploy não dispara)
+
+O app usa **Dockerfile na raiz** + scripts Python fora de `dashboard/`. Se o Railway mostrar *"No changes to watched files"*, ajuste:
+
+1. Serviço web → **Settings** → **Build** → **Watch Paths**
+2. Deixe **vazio** (observa tudo) **ou** use os mesmos padrões do `railway.json`:
+   ```
+   Dockerfile
+   railway.json
+   requirements.txt
+   anvisa_*.py
+   scripts/**
+   dashboard/**
+   ```
+3. **Root Directory** deve ser `/` (raiz do repositório), não `dashboard/`
+4. **Config file**: `/railway.json` (caminho absoluto na raiz)
+
+O `railway.json` na raiz já define `build.watchPatterns` — ele sobrescreve o painel quando o deploy roda com esse arquivo.
 
 ## 5. Domínio público
 
