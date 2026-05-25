@@ -336,10 +336,28 @@ class AnvisaB2Downloader:
         urls: List[str] = []
         seen: Set[str] = set()
 
+        # Somente equipamentos médicos (sem consumíveis: seringa, luva, agulha, etc.)
         default_terms = [
-            "cateter", "bomba", "monitor", "seringa", "ventilador",
-            "oximetro", "sonda", "equipo", "desfibrilador", "marcapasso",
-            "luva", "agulha", "stent", "prótese", "implante",
+            "ventilador",
+            "monitor",
+            "bomba infusao",
+            "desfibrilador",
+            "oximetro",
+            "eletrocardiografo",
+            "ultrassom",
+            "tomografo",
+            "ressonancia",
+            "endoscopio",
+            "marcapasso",
+            "autoclave",
+            "esterilizador",
+            "incubadora",
+            "hemodialise",
+            "mamografo",
+            "aspirador cirurgico",
+            "mesa cirurgica",
+            "radiologia",
+            "implante",
         ]
         env_terms = os.getenv("ANVISA_SEARCH_TERMS", "")
         search_terms = [t.strip() for t in env_terms.split(",") if t.strip()] or default_terms
