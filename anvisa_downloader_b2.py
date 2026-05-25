@@ -275,6 +275,42 @@ class AnvisaB2Downloader:
         except Exception as e:
             logger.error(f"Erro ao salvar progresso: {e}")
     
+    def _is_manual_attachment(self, arquivo: Dict) -> bool:
+        """Verifica se o anexo é um PDF de manual/instruções."""
+        if not arquivo.get("anexoCod"):
+            return False
+
+        tipo = (arquivo.get("tipoArquivo") or "").upper()
+        nome = (
+            (arquivo.get("nomeCompleto") or "")
+            + " "
+            + (arquivo.get("nomeArquivo") or "")
+            + " "
+            + (arquivo.get("descricaoTipoAnexo") or "")
+        ).lower()
+
+        is_pdf = tipo == "PDF" or ".pdf" in nome
+        if tipo and tipo != "PDF":
+            return False
+        if not is_pdf:
+            return False
+
+        if os.getenv("ANVISA_ANY_PDF", "").lower() in ("1", "true", "yes"):
+            return True
+
+        manual_keywords = (
+            "manual",
+            "instru",
+            "uso",
+            "operac",
+            "operacão",
+            "rotulo",
+            "rótulo",
+            "label",
+            "ifu",
+        )
+        return any(k in nome for k in manual_keywords) or tipo == "PDF"
+
     def search_anvisa_pdfs(self, max_results: int = 100) -> List[str]:
         """
         Busca PDFs de manuais via API oficial da ANVISA (consultas.anvisa.gov.br).
@@ -295,28 +331,42 @@ class AnvisaB2Downloader:
 
         logger.info("Buscando manuais via API oficial da ANVISA...")
         page_size = int(os.getenv("ANVISA_PAGE_SIZE", "20"))
+        max_pages_per_term = int(os.getenv("ANVISA_MAX_PAGES", "25"))
+        max_empty_pages = int(os.getenv("ANVISA_MAX_EMPTY_PAGES", "8"))
+        detail_delay = float(os.getenv("ANVISA_DETAIL_DELAY", "0.15"))
+
+        logger.info(
+            f"Limites: max_páginas/termo={max_pages_per_term}, "
+            f"páginas_vazias_consecutivas={max_empty_pages}, page_size={page_size}"
+        )
 
         for term in search_terms:
             if len(urls) >= max_results:
                 break
 
             page = 0
-            while len(urls) < max_results:
+            empty_pages = 0
+            while len(urls) < max_results and page < max_pages_per_term:
                 products, is_last = self._search_anvisa_products(term, page, page_size)
                 if not products:
                     break
 
+                page_manuals = 0
                 for product in products:
                     processo = product.get("processo")
                     if not processo:
                         continue
 
-                    for manual in self._get_product_manuals(processo, term):
+                    nome_produto = product.get("produto") or term
+                    for manual in self._get_product_manuals(
+                        processo, nome_produto, search_term=term
+                    ):
                         url = manual["url"]
                         if url not in seen:
                             seen.add(url)
                             urls.append(url)
                             self.manual_metadata[url] = manual["metadata"]
+                            page_manuals += 1
                             logger.info(
                                 f"Manual encontrado: {manual['metadata'].get('nomeProduto', processo)} -> {url}"
                             )
@@ -325,6 +375,23 @@ class AnvisaB2Downloader:
 
                     if len(urls) >= max_results:
                         break
+                    if detail_delay > 0:
+                        time.sleep(detail_delay)
+
+                logger.info(
+                    f"API ANVISA [{term} pág {page}]: {len(products)} produtos, "
+                    f"{page_manuals} manuais nesta página (total: {len(urls)})"
+                )
+
+                if page_manuals == 0:
+                    empty_pages += 1
+                    if empty_pages >= max_empty_pages:
+                        logger.info(
+                            f"Termo '{term}': {max_empty_pages} páginas seguidas sem manuais — próximo termo"
+                        )
+                        break
+                else:
+                    empty_pages = 0
 
                 if is_last:
                     break
@@ -356,7 +423,7 @@ class AnvisaB2Downloader:
             content = data.get("content", [])
             is_last = data.get("last", True)
             total = data.get("totalElements", "?")
-            logger.info(
+            logger.debug(
                 f"API ANVISA [{nome_produto} pág {pagina}]: "
                 f"{len(content)} produtos (total catálogo: {total})"
             )
@@ -405,20 +472,38 @@ class AnvisaB2Downloader:
             "pdfFilename": pdf_filename,
         }
 
-    def _get_product_manuals(self, processo: str, nome_produto: str) -> List[Dict]:
+    def _get_product_manuals(
+        self, processo: str, nome_produto: str, search_term: Optional[str] = None
+    ) -> List[Dict]:
         """Obtém manuais PDF e metadados completos de um produto."""
         api_url = f"https://consultas.anvisa.gov.br/api/consulta/saude/{processo}"
-        params = {"nomeProduto": nome_produto}
         manuals: List[Dict] = []
 
-        try:
-            response = self.session.get(api_url, params=params, timeout=30)
-            if response.status_code != 200:
-                return manuals
+        # A API exige nomeProduto; tenta nome exato do produto e depois o termo de busca.
+        param_candidates = [nome_produto]
+        if search_term and search_term not in param_candidates:
+            param_candidates.append(search_term)
 
-            detail = response.json()
+        detail: Optional[Dict] = None
+        for param in param_candidates:
+            try:
+                response = self.session.get(
+                    api_url, params={"nomeProduto": param}, timeout=30
+                )
+                if response.status_code != 200:
+                    continue
+                detail = response.json()
+                if detail.get("arquivos"):
+                    break
+            except Exception as e:
+                logger.debug(f"Erro ao obter anexos do processo {processo} ({param}): {e}")
+
+        if not detail:
+            return manuals
+
+        try:
             for arq in detail.get("arquivos", []):
-                if arq.get("tipoArquivo", "").upper() != "PDF":
+                if not self._is_manual_attachment(arq):
                     continue
 
                 anexo_cod = arq.get("anexoCod")
@@ -435,7 +520,7 @@ class AnvisaB2Downloader:
                 manuals.append({"url": download_url, "metadata": metadata})
 
         except Exception as e:
-            logger.debug(f"Erro ao obter anexos do processo {processo}: {e}")
+            logger.debug(f"Erro ao processar anexos do processo {processo}: {e}")
 
         return manuals
 
