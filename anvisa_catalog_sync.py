@@ -2,6 +2,9 @@
 """
 Sincroniza o catálogo completo de produtos para saúde da ANVISA no PostgreSQL (via stdout).
 
+Fonte: CSV oficial de dados abertos (TA_PRODUTO_SAUDE_SITE.csv).
+A API consultas.anvisa.gov.br com Guest ignora busca/paginação.
+
 Emite linhas estruturadas para o catalogManager do dashboard:
   CATALOG_META {"totalElements":..., "pageSize":..., "queryTerm":"..."}
   CATALOG_PAGE {"page":0,"count":50}
@@ -15,11 +18,13 @@ Uso:
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import logging
 import os
 import sys
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 try:
@@ -37,7 +42,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-API_URL = "https://consultas.anvisa.gov.br/api/consulta/saude"
+DEFAULT_CSV_URL = "https://dados.anvisa.gov.br/dados/TA_PRODUTO_SAUDE_SITE.csv"
 
 
 def create_session() -> requests.Session:
@@ -52,43 +57,43 @@ def create_session() -> requests.Session:
     session.headers.update(
         {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Accept": "application/json, text/plain, */*",
+            "Accept": "text/csv, application/octet-stream, */*",
             "Accept-Language": "pt-BR,pt;q=0.9",
-            "Authorization": "Guest",
-            "Referer": "https://consultas.anvisa.gov.br/",
         }
     )
     return session
 
 
 def parse_anvisa_date(value: Optional[str]) -> Optional[str]:
-    return value or None
+    if not value or not str(value).strip():
+        return None
+    raw = str(value).strip()
+    # CSV usa DD/MM/YYYY
+    if len(raw) == 10 and raw[2] == "/" and raw[5] == "/":
+        d, m, y = raw.split("/")
+        return f"{y}-{m}-{d}T00:00:00"
+    return raw
 
 
-def map_registro(item: Dict[str, Any], sync_id: int) -> Dict[str, Any]:
-    empresa = item.get("empresa") or {}
-    risco = item.get("risco") or {}
-    venc = item.get("vencimento") or {}
+def map_csv_registro(row: Dict[str, Any], sync_id: int) -> Dict[str, Any]:
     return {
-        "processo": str(item.get("processo") or ""),
-        "numeroRegistro": item.get("registro"),
-        "nomeProduto": item.get("produto"),
-        "nomeTecnico": item.get("nomeTecnico"),
-        "situacao": item.get("situacao"),
-        "cnpjEmpresa": empresa.get("cnpj"),
-        "razaoSocial": empresa.get("razaoSocial"),
-        "autorizacaoEmpresa": empresa.get("autorizacao"),
-        "riscoSigla": risco.get("sigla"),
-        "riscoDescricao": risco.get("descricao"),
-        "vencimentoDescricao": venc.get("descricao"),
-        "dataInicioVigencia": parse_anvisa_date(item.get("dataInicioVigencia")),
-        "dataVencimento": parse_anvisa_date(
-            item.get("dataVencimento") or venc.get("data")
-        ),
-        "dataCancelamento": parse_anvisa_date(item.get("dataCancelamento")),
-        "cancelado": item.get("cancelado"),
+        "processo": str(row.get("NUMERO_PROCESSO") or "").strip(),
+        "numeroRegistro": (row.get("NUMERO_REGISTRO_CADASTRO") or "").strip() or None,
+        "nomeProduto": (row.get("NOME_COMERCIAL") or "").strip() or None,
+        "nomeTecnico": (row.get("NOME_TECNICO") or "").strip() or None,
+        "situacao": (row.get("VALIDADE_REGISTRO_CADASTRO") or "").strip() or None,
+        "cnpjEmpresa": (row.get("CNPJ_DETENTOR_REGISTRO_CADASTRO") or "").strip() or None,
+        "razaoSocial": (row.get("DETENTOR_REGISTRO_CADASTRO") or "").strip() or None,
+        "autorizacaoEmpresa": None,
+        "riscoSigla": (row.get("CLASSE_RISCO") or "").strip() or None,
+        "riscoDescricao": None,
+        "vencimentoDescricao": (row.get("VALIDADE_REGISTRO_CADASTRO") or "").strip() or None,
+        "dataInicioVigencia": parse_anvisa_date(row.get("DT_PUB_REGISTRO_CADASTRO")),
+        "dataVencimento": parse_anvisa_date(row.get("VALIDADE_REGISTRO_CADASTRO")),
+        "dataCancelamento": None,
+        "cancelado": None,
         "catalogSyncId": sync_id,
-        "metadataJson": item,
+        "metadataJson": row,
     }
 
 
@@ -97,7 +102,7 @@ class AnvisaCatalogSync:
         self,
         sync_id: int,
         start_page: int = 0,
-        query_term: str = "a",
+        query_term: str = "open_data",
         page_size: int = 50,
         max_pages: Optional[int] = None,
     ):
@@ -108,88 +113,144 @@ class AnvisaCatalogSync:
         self.max_pages = max_pages
         self.session = create_session()
         self.total_emitted = 0
-
-    def fetch_page(self, page: int) -> tuple[List[Dict], bool, int]:
-        params = {
-            "pagina": page,
-            "tamanho": self.page_size,
-            "nomeProduto": self.query_term,
-        }
-        response = self.session.get(API_URL, params=params, timeout=60)
-        response.raise_for_status()
-        data = response.json()
-        content = data.get("content") or []
-        total = int(data.get("totalElements") or 0)
-        is_last = bool(data.get("last", True))
-        return content, is_last, total
-
-    def run(self) -> int:
-        page = self.start_page
-        total_elements = 0
-        pages_done = 0
-        delay = float(os.getenv("ANVISA_CATALOG_DELAY", "0.2"))
-
-        logger.info(
-            f"Catálogo ANVISA: termo='{self.query_term}', página inicial={self.start_page}, "
-            f"tamanho={self.page_size}"
+        self.csv_url = os.getenv("ANVISA_OPEN_DATA_URL", DEFAULT_CSV_URL)
+        self.cache_path = Path(
+            os.getenv("ANVISA_OPEN_DATA_CACHE", "/tmp/ta_produto_saude_site.csv")
         )
 
-        while True:
-            if self.max_pages is not None and pages_done >= self.max_pages:
-                logger.info(f"Limite de páginas atingido ({self.max_pages})")
-                break
+    def _download_csv(self) -> Path:
+        ttl_hours = int(os.getenv("ANVISA_OPEN_DATA_CACHE_HOURS", "24"))
+        if self.cache_path.exists():
+            age_hours = (time.time() - self.cache_path.stat().st_mtime) / 3600
+            if age_hours < ttl_hours:
+                logger.info(f"Usando CSV em cache: {self.cache_path}")
+                return self.cache_path
 
-            try:
-                items, is_last, total_elements = self.fetch_page(page)
-            except Exception as e:
-                logger.error(f"Erro na página {page}: {e}")
-                print(f"CATALOG_ERROR:{{\"page\":{page},\"message\":{json.dumps(str(e))}}}", flush=True)
-                time.sleep(5)
-                continue
+        logger.info(f"Baixando CSV: {self.csv_url}")
+        verify_ssl = os.getenv("ANVISA_OPEN_DATA_VERIFY_SSL", "true").lower() not in (
+            "0",
+            "false",
+            "no",
+        )
+        response = self.session.get(
+            self.csv_url, timeout=300, verify=verify_ssl, stream=True
+        )
+        response.raise_for_status()
+        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.cache_path.with_suffix(".tmp")
+        with open(tmp, "wb") as f:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    f.write(chunk)
+        tmp.replace(self.cache_path)
+        logger.info(f"CSV salvo: {self.cache_path} ({self.cache_path.stat().st_size} bytes)")
+        return self.cache_path
 
-            if page == self.start_page:
-                total_pages = (
-                    (total_elements + self.page_size - 1) // self.page_size
-                    if total_elements
-                    else 0
-                )
-                meta = {
-                    "totalElements": total_elements,
-                    "totalPages": total_pages,
-                    "pageSize": self.page_size,
-                    "queryTerm": self.query_term,
-                    "startPage": self.start_page,
-                }
-                print(f"CATALOG_META {json.dumps(meta, ensure_ascii=False)}", flush=True)
+    def _count_csv_rows(self, csv_path: Path) -> int:
+        with open(csv_path, "r", encoding="latin-1", newline="") as f:
+            return max(sum(1 for _ in f) - 1, 0)
 
-            batch = [map_registro(item, self.sync_id) for item in items if item.get("processo")]
-            if batch:
-                print(f"REGISTRO_BATCH {json.dumps(batch, ensure_ascii=False)}", flush=True)
-                self.total_emitted += len(batch)
+    def run(self) -> int:
+        delay = float(os.getenv("ANVISA_CATALOG_DELAY", "0.05"))
+        skip_rows = self.start_page * self.page_size
+        page = self.start_page
+        pages_done = 0
 
+        logger.info(
+            f"Catálogo ANVISA (dados abertos): CSV, página inicial={self.start_page}, "
+            f"tamanho lote={self.page_size}, skip_rows={skip_rows}"
+        )
+
+        try:
+            csv_path = self._download_csv()
+        except Exception as e:
+            logger.error(f"Falha ao baixar CSV: {e}")
+            print(
+                f"CATALOG_ERROR:{json.dumps({'page': page, 'message': str(e)}, ensure_ascii=False)}",
+                flush=True,
+            )
+            return 0
+
+        total_elements = self._count_csv_rows(csv_path)
+        total_pages = (
+            (total_elements + self.page_size - 1) // self.page_size
+            if total_elements
+            else 0
+        )
+        meta = {
+            "totalElements": total_elements,
+            "totalPages": total_pages,
+            "pageSize": self.page_size,
+            "queryTerm": self.query_term,
+            "startPage": self.start_page,
+            "source": "open_data_csv",
+            "csvUrl": self.csv_url,
+        }
+        print(f"CATALOG_META {json.dumps(meta, ensure_ascii=False)}", flush=True)
+
+        batch: List[Dict[str, Any]] = []
+        row_index = 0
+        seen_processos: set[str] = set()
+
+        with open(csv_path, "r", encoding="latin-1", newline="") as f:
+            reader = csv.DictReader(f, delimiter=";")
+            for row in reader:
+                processo = str(row.get("NUMERO_PROCESSO") or "").strip()
+                if not processo or processo in seen_processos:
+                    row_index += 1
+                    continue
+                seen_processos.add(processo)
+
+                if row_index < skip_rows:
+                    row_index += 1
+                    continue
+
+                batch.append(map_csv_registro(row, self.sync_id))
+                row_index += 1
+
+                if len(batch) >= self.page_size:
+                    print(f"REGISTRO_BATCH {json.dumps(batch, ensure_ascii=False)}", flush=True)
+                    self.total_emitted += len(batch)
+                    print(
+                        f"CATALOG_PAGE {json.dumps({'page': page, 'count': len(batch), 'totalEmitted': self.total_emitted}, ensure_ascii=False)}",
+                        flush=True,
+                    )
+                    logger.info(
+                        f"Página {page}: {len(batch)} registros "
+                        f"(total emitido: {self.total_emitted} / ~{total_elements})"
+                    )
+                    batch = []
+                    pages_done += 1
+                    page += 1
+
+                    if self.max_pages is not None and pages_done >= self.max_pages:
+                        logger.info(f"Limite de páginas atingido ({self.max_pages})")
+                        break
+
+                    if delay > 0:
+                        time.sleep(delay)
+
+        if batch and (self.max_pages is None or pages_done < self.max_pages):
+            print(f"REGISTRO_BATCH {json.dumps(batch, ensure_ascii=False)}", flush=True)
+            self.total_emitted += len(batch)
             print(
                 f"CATALOG_PAGE {json.dumps({'page': page, 'count': len(batch), 'totalEmitted': self.total_emitted}, ensure_ascii=False)}",
                 flush=True,
             )
             logger.info(
-                f"Página {page}: {len(batch)} registros (total emitido: {self.total_emitted} / catálogo ~{total_elements})"
+                f"Página final {page}: {len(batch)} registros (total: {self.total_emitted})"
             )
 
-            pages_done += 1
-            if is_last or not items:
-                break
-
-            page += 1
-            if delay > 0:
-                time.sleep(delay)
-
-        print(f"CATALOG_DONE {json.dumps({'records': self.total_emitted}, ensure_ascii=False)}", flush=True)
+        print(
+            f"CATALOG_DONE {json.dumps({'records': self.total_emitted}, ensure_ascii=False)}",
+            flush=True,
+        )
         logger.info(f"Sincronização concluída: {self.total_emitted} registros emitidos")
         return self.total_emitted
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Sync catálogo ANVISA")
+    parser = argparse.ArgumentParser(description="Sync catálogo ANVISA (dados abertos)")
     parser.add_argument("--sync-id", type=int, required=True)
     parser.add_argument("--start-page", type=int, default=0)
     parser.add_argument("--query-term", type=str, default=None)
@@ -197,7 +258,7 @@ def main() -> None:
     parser.add_argument("--max-pages", type=int, default=None)
     args = parser.parse_args()
 
-    query_term = args.query_term or os.getenv("ANVISA_CATALOG_QUERY", "a")
+    query_term = args.query_term or os.getenv("ANVISA_CATALOG_QUERY", "open_data")
     page_size = args.page_size or int(os.getenv("ANVISA_CATALOG_PAGE_SIZE", "50"))
     max_pages = args.max_pages
     if max_pages is None and os.getenv("ANVISA_CATALOG_MAX_PAGES"):

@@ -229,7 +229,9 @@ export async function upsertEquipamento(
   if (data.executionId != null) {
     conditions.push(eq(equipamentos.executionId, data.executionId));
   }
-  if (data.pdfUrl) {
+  if (data.nomeArquivo) {
+    conditions.push(eq(equipamentos.nomeArquivo, data.nomeArquivo));
+  } else if (data.pdfUrl) {
     conditions.push(eq(equipamentos.pdfUrl, data.pdfUrl));
   }
 

@@ -34,6 +34,7 @@ import time
 import logging
 import argparse
 import re
+import unicodedata
 from pathlib import Path
 from datetime import datetime
 from urllib.parse import urljoin, quote, unquote, urlparse
@@ -71,6 +72,71 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+# Equipamentos médicos (filtro client-side — a API não filtra nomeProduto de forma confiável)
+DEFAULT_EQUIPMENT_KEYWORDS = [
+    "monitor",
+    "oximet",
+    "ventilador",
+    "desfibril",
+    "eletrocardiogra",
+    "ultrassom",
+    "ultrasson",
+    "tomogra",
+    "ressonancia",
+    "endoscop",
+    "marcapasso",
+    "autoclave",
+    "esteriliz",
+    "incubadora",
+    "hemodial",
+    "mamogra",
+    "bomba infus",
+    "bomba de infus",
+    "aspirador cirurg",
+    "mesa cirurg",
+    "radiolog",
+    "implante",
+    "raio x",
+    "raio-x",
+    "cintilograf",
+    "litotrips",
+    "anestes",
+    "respirator",
+    "cardiovers",
+    "holter",
+    "spiromet",
+    "nebuliz",
+    "fototerap",
+    "termometro clinico",
+    "pressao arterial",
+    "aparelho auditivo",
+]
+
+# Consumíveis — excluir mesmo que apareçam na busca genérica da API
+CONSUMABLE_MARKERS = [
+    "seringa",
+    "luva",
+    "agulha",
+    "cateter",
+    "sonda",
+    "equipo",
+    "gaze",
+    "atadura",
+    "curativo",
+    "algodao",
+    "mascara descart",
+    "capote",
+    "avental",
+]
+
+
+def _normalize_text(value: str) -> str:
+    if not value:
+        return ""
+    normalized = unicodedata.normalize("NFKD", value)
+    ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"\s+", " ", ascii_text).strip().lower()
 
 
 class BackblazeB2Manager:
@@ -210,6 +276,7 @@ class AnvisaB2Downloader:
         self.manifest_file = self.output_dir / "manifest_b2.json"
         self.downloaded_urls: Set[str] = set()
         self.manual_metadata: Dict[str, Dict] = {}
+        self._product_manuals_cache: Dict[str, List[Dict]] = {}
         
         # Criar diretório de saída
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -275,28 +342,31 @@ class AnvisaB2Downloader:
         except Exception as e:
             logger.error(f"Erro ao salvar progresso: {e}")
     
-    def _is_manual_attachment(self, arquivo: Dict) -> bool:
-        """Anexo PDF de instruções de uso / manual (tipo oficial ANVISA)."""
-        if not arquivo.get("anexoCod"):
-            return False
-
+    def _is_pdf_attachment(self, arquivo: Dict) -> bool:
         tipo = (arquivo.get("tipoArquivo") or "").upper()
         nome = (
             (arquivo.get("nomeCompleto") or "")
             + " "
             + (arquivo.get("nomeArquivo") or "")
         ).lower()
-        descricao = (arquivo.get("descricaoTipoAnexo") or "").upper()
-
         if tipo and tipo != "PDF":
             return False
-        if not (tipo == "PDF" or ".pdf" in nome):
+        return tipo == "PDF" or ".pdf" in nome
+
+    def _is_downloadable_attachment(self, arquivo: Dict) -> bool:
+        """Anexo PDF disponível para download (manual, rotulagem, etc.)."""
+        if not arquivo.get("anexoCod"):
+            return False
+        if not self._is_pdf_attachment(arquivo):
             return False
 
-        if os.getenv("ANVISA_ANY_PDF", "").lower() in ("1", "true", "yes"):
+        manual_only = os.getenv("ANVISA_MANUAL_ONLY", "").lower() in ("1", "true", "yes")
+        any_pdf = os.getenv("ANVISA_ANY_PDF", "true").lower() in ("1", "true", "yes")
+        if any_pdf and not manual_only:
             return True
 
-        manual_markers = ("INSTRU", "MANUAL", "USO")
+        descricao = (arquivo.get("descricaoTipoAnexo") or "").upper()
+        manual_markers = ("INSTRU", "MANUAL", "USO", "ROTULAG", "FOLDER", "ANEXO")
         return any(m in descricao for m in manual_markers)
 
     def _validate_pdf_bytes(self, data: bytes, url: str) -> Optional[str]:
@@ -322,6 +392,121 @@ class AnvisaB2Downloader:
         response.raise_for_status()
         return response.content
 
+    def _product_text(self, product: Dict) -> str:
+        return _normalize_text(
+            f"{product.get('produto') or ''} {product.get('nomeTecnico') or ''}"
+        )
+
+    def _is_consumable(self, product: Dict) -> bool:
+        text = self._product_text(product)
+        return any(marker in text for marker in CONSUMABLE_MARKERS)
+
+    def _matches_keyword(self, product: Dict, keyword: str) -> bool:
+        text = self._product_text(product)
+        return _normalize_text(keyword) in text
+
+    def _matches_any_keyword(self, product: Dict, keywords: List[str]) -> bool:
+        if self._is_consumable(product):
+            return False
+        text = self._product_text(product)
+        return any(_normalize_text(k) in text for k in keywords)
+
+    def _get_equipment_keywords(self) -> List[str]:
+        env_terms = os.getenv("ANVISA_EQUIPMENT_KEYWORDS", "")
+        if env_terms.strip():
+            return [t.strip() for t in env_terms.split(",") if t.strip()]
+        env_search = os.getenv("ANVISA_SEARCH_TERMS", "")
+        if env_search.strip():
+            return [t.strip() for t in env_search.split(",") if t.strip()]
+        return DEFAULT_EQUIPMENT_KEYWORDS
+
+    def _anexo_key(self, processo: str, metadata: Dict, url: str) -> str:
+        anexo_cod = metadata.get("anexoCod")
+        if anexo_cod:
+            return f"{processo}:{anexo_cod}"
+        nome = metadata.get("nomeArquivo") or metadata.get("pdfFilename")
+        if nome:
+            return f"{processo}:{nome}"
+        return url
+
+    def _register_manual(
+        self,
+        url: str,
+        metadata: Dict,
+        seen_urls: Set[str],
+        seen_anexos: Set[str],
+        urls: List[str],
+        on_manual: Optional[Callable[[str, Dict], None]],
+        *,
+        index: int = 1,
+        total: int = 1,
+    ) -> bool:
+        """Registra anexo novo. Retorna True se ainda não havia sido processado."""
+        processo = str(metadata.get("processo") or "")
+        anexo_key = self._anexo_key(processo, metadata, url)
+        if anexo_key in seen_anexos or url in seen_urls:
+            return False
+        seen_anexos.add(anexo_key)
+        seen_urls.add(url)
+        urls.append(url)
+        self.manual_metadata[url] = metadata
+        arquivo = metadata.get("nomeArquivo") or metadata.get("pdfFilename") or "arquivo"
+        logger.info(
+            f"Anexo {index}/{total}: {metadata.get('nomeProduto', processo)} "
+            f"— {arquivo} ({metadata.get('tipoAnexo', '')})"
+        )
+        if on_manual:
+            on_manual(url, metadata)
+        print(f"TOTAL_FOUND:{len(urls)}", flush=True)
+        return True
+
+    def _process_product_for_manuals(
+        self,
+        product: Dict,
+        seen_urls: Set[str],
+        seen_anexos: Set[str],
+        urls: List[str],
+        max_results: int,
+        on_manual: Optional[Callable[[str, Dict], None]],
+        search_term: Optional[str] = None,
+    ) -> Tuple[int, int]:
+        """
+        Consulta detalhe do produto e registra todos os anexos PDF.
+        Retorna (anexos_encontrados, anexos_novos).
+        """
+        processo = product.get("processo")
+        if not processo:
+            return 0, 0
+
+        nome_produto = product.get("produto") or search_term or ""
+        manuals = self._get_product_manuals(
+            processo, nome_produto, search_term=search_term
+        )
+        found = len(manuals)
+        new_count = 0
+
+        if found > 1:
+            logger.info(
+                f"Processo {processo}: {found} arquivo(s) PDF — "
+                f"{manuals[0]['metadata'].get('nomeProduto', nome_produto)}"
+            )
+
+        for index, manual in enumerate(manuals, start=1):
+            if self._register_manual(
+                manual["url"],
+                manual["metadata"],
+                seen_urls,
+                seen_anexos,
+                urls,
+                on_manual,
+                index=index,
+                total=found,
+            ):
+                new_count += 1
+            if len(urls) >= max_results:
+                break
+        return found, new_count
+
     def search_anvisa_pdfs(
         self,
         max_results: int = 100,
@@ -330,39 +515,162 @@ class AnvisaB2Downloader:
         """
         Busca PDFs de manuais via API oficial da ANVISA (consultas.anvisa.gov.br).
 
-        A busca por DuckDuckGo/Google falha em datacenters (Railway); a API
-        funciona com Authorization: Guest.
+        Modos (ANVISA_SCAN_MODE):
+          - catalog (padrão): pagina o catálogo inteiro e filtra equipamentos no cliente
+          - terms: busca por termos (legado; a API retorna resultados genéricos)
+        """
+        scan_mode = os.getenv("ANVISA_SCAN_MODE", "open_data").strip().lower()
+        if scan_mode in ("catalog", "open_data"):
+            return self._search_open_data_catalog(max_results, on_manual)
+        if scan_mode == "terms":
+            return self._search_by_terms(max_results, on_manual)
+        logger.warning(f"ANVISA_SCAN_MODE desconhecido ({scan_mode}), usando open_data")
+        return self._search_open_data_catalog(max_results, on_manual)
+
+    def _download_open_data_csv(self, csv_url: str, cache_path: Path) -> Path:
+        """Baixa CSV de dados abertos ANVISA (com cache local)."""
+        ttl_hours = int(os.getenv("ANVISA_OPEN_DATA_CACHE_HOURS", "24"))
+        if cache_path.exists():
+            age_hours = (time.time() - cache_path.stat().st_mtime) / 3600
+            if age_hours < ttl_hours:
+                logger.info(f"Usando CSV em cache: {cache_path} ({age_hours:.1f}h)")
+                return cache_path
+
+        logger.info(f"Baixando dados abertos ANVISA: {csv_url}")
+        verify_ssl = os.getenv("ANVISA_OPEN_DATA_VERIFY_SSL", "true").lower() not in (
+            "0",
+            "false",
+            "no",
+        )
+        response = self.session.get(csv_url, timeout=300, verify=verify_ssl, stream=True)
+        response.raise_for_status()
+
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = cache_path.with_suffix(".tmp")
+        with open(tmp_path, "wb") as f:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    f.write(chunk)
+        tmp_path.replace(cache_path)
+        logger.info(f"CSV salvo: {cache_path} ({cache_path.stat().st_size} bytes)")
+        return cache_path
+
+    def _iter_open_data_products(self, csv_path: Path):
+        """Itera produtos do CSV TA_PRODUTO_SAUDE_SITE."""
+        import csv
+
+        with open(csv_path, "r", encoding="latin-1", newline="") as f:
+            reader = csv.DictReader(f, delimiter=";")
+            for row in reader:
+                processo = (row.get("NUMERO_PROCESSO") or "").strip()
+                if not processo:
+                    continue
+                yield {
+                    "processo": processo,
+                    "produto": (row.get("NOME_COMERCIAL") or "").strip(),
+                    "nomeTecnico": (row.get("NOME_TECNICO") or "").strip(),
+                    "numeroRegistro": (row.get("NUMERO_REGISTRO_CADASTRO") or "").strip(),
+                    "situacao": (row.get("VALIDADE_REGISTRO_CADASTRO") or "").strip(),
+                }
+
+    def _search_open_data_catalog(
+        self,
+        max_results: int,
+        on_manual: Optional[Callable[[str, Dict], None]] = None,
+    ) -> List[str]:
+        """
+        Usa o CSV oficial de produtos para saúde (dados.abertos ANVISA).
+
+        A API consultas.anvisa.gov.br com Authorization: Guest ignora busca e paginação
+        (sempre retorna os mesmos ~10 produtos). O CSV tem ~180k registros reais.
         """
         urls: List[str] = []
-        seen: Set[str] = set()
+        seen_urls: Set[str] = set()
+        seen_anexos: Set[str] = set()
+        keywords = self._get_equipment_keywords()
 
-        # Somente equipamentos médicos (sem consumíveis: seringa, luva, agulha, etc.)
-        default_terms = [
-            "ventilador",
-            "monitor",
-            "bomba infusao",
-            "desfibrilador",
-            "oximetro",
-            "eletrocardiografo",
-            "ultrassom",
-            "tomografo",
-            "ressonancia",
-            "endoscopio",
-            "marcapasso",
-            "autoclave",
-            "esterilizador",
-            "incubadora",
-            "hemodialise",
-            "mamografo",
-            "aspirador cirurgico",
-            "mesa cirurgica",
-            "radiologia",
-            "implante",
-        ]
+        csv_url = os.getenv(
+            "ANVISA_OPEN_DATA_URL",
+            "https://dados.anvisa.gov.br/dados/TA_PRODUTO_SAUDE_SITE.csv",
+        )
+        cache_path = Path(
+            os.getenv("ANVISA_OPEN_DATA_CACHE", "/tmp/ta_produto_saude_site.csv")
+        )
+        detail_delay = float(os.getenv("ANVISA_DETAIL_DELAY", "0.15"))
+        max_scan = int(os.getenv("ANVISA_OPEN_DATA_MAX_ROWS", "0"))  # 0 = sem limite
+
+        logger.info("Buscando manuais via dados abertos ANVISA (CSV oficial)...")
+        logger.info(f"CSV: {csv_url}, keywords={len(keywords)}")
+
+        try:
+            csv_path = self._download_open_data_csv(csv_url, cache_path)
+        except Exception as e:
+            logger.error(f"Falha ao baixar CSV de dados abertos: {e}")
+            logger.info("Tentando modo termos (legado) como fallback...")
+            return self._search_by_terms(max_results, on_manual)
+
+        equipment_checked = 0
+        rows_read = 0
+
+        for product in self._iter_open_data_products(csv_path):
+            rows_read += 1
+            if max_scan > 0 and rows_read > max_scan:
+                logger.info(f"Limite ANVISA_OPEN_DATA_MAX_ROWS atingido ({max_scan})")
+                break
+
+            if not self._matches_any_keyword(product, keywords):
+                continue
+
+            equipment_checked += 1
+            found, new_count = self._process_product_for_manuals(
+                product,
+                seen_urls,
+                seen_anexos,
+                urls,
+                max_results,
+                on_manual,
+            )
+
+            if found and logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    f"CSV [{equipment_checked}] {product.get('produto')} -> "
+                    f"{found} manual(is), {new_count} novo(s)"
+                )
+
+            if equipment_checked % 50 == 0:
+                logger.info(
+                    f"Dados abertos: {rows_read} linhas, {equipment_checked} equipamentos, "
+                    f"{len(urls)} manuais (total meta: {max_results})"
+                )
+
+            if len(urls) >= max_results:
+                break
+            if detail_delay > 0:
+                time.sleep(detail_delay)
+
+        logger.info(
+            f"Dados abertos: {rows_read} linhas lidas, {equipment_checked} equipamentos "
+            f"filtrados, {len(urls)} manuais encontrados"
+        )
+        if not on_manual:
+            print(f"TOTAL_FOUND:{len(urls)}", flush=True)
+        return urls[:max_results]
+
+    def _search_by_terms(
+        self,
+        max_results: int,
+        on_manual: Optional[Callable[[str, Dict], None]] = None,
+    ) -> List[str]:
+        """Busca legada por termos (com filtro client-side no nome do produto)."""
+        urls: List[str] = []
+        seen_urls: Set[str] = set()
+        seen_anexos: Set[str] = set()
+
+        default_terms = DEFAULT_EQUIPMENT_KEYWORDS[:20]
         env_terms = os.getenv("ANVISA_SEARCH_TERMS", "")
         search_terms = [t.strip() for t in env_terms.split(",") if t.strip()] or default_terms
 
-        logger.info("Buscando manuais via API oficial da ANVISA...")
+        logger.info("Buscando manuais via API ANVISA (modo termos + filtro client-side)...")
         page_size = int(os.getenv("ANVISA_PAGE_SIZE", "20"))
         max_pages_per_term = int(os.getenv("ANVISA_MAX_PAGES", "25"))
         max_empty_pages = int(os.getenv("ANVISA_MAX_EMPTY_PAGES", "8"))
@@ -384,32 +692,26 @@ class AnvisaB2Downloader:
                 if not products:
                     break
 
-                page_manuals = 0
-                for product in products:
-                    processo = product.get("processo")
-                    if not processo:
-                        continue
+                page_relevant = 0
+                page_manuals_found = 0
+                page_manuals_new = 0
 
-                    nome_produto = product.get("produto") or term
-                    for manual in self._get_product_manuals(
-                        processo, nome_produto, search_term=term
-                    ):
-                        url = manual["url"]
-                        if url not in seen:
-                            seen.add(url)
-                            urls.append(url)
-                            self.manual_metadata[url] = manual["metadata"]
-                            page_manuals += 1
-                            logger.info(
-                                f"Manual encontrado: {manual['metadata'].get('nomeProduto', processo)} -> {url}"
-                            )
-                            if on_manual:
-                                on_manual(url, manual["metadata"])
-                                print(f"TOTAL_FOUND:{len(urls)}", flush=True)
-                            else:
-                                print(f"TOTAL_FOUND:{len(urls)}", flush=True)
-                            if len(urls) >= max_results:
-                                break
+                for product in products:
+                    if not self._matches_keyword(product, term):
+                        continue
+                    page_relevant += 1
+
+                    found, new_count = self._process_product_for_manuals(
+                        product,
+                        seen_urls,
+                        seen_anexos,
+                        urls,
+                        max_results,
+                        on_manual,
+                        search_term=term,
+                    )
+                    page_manuals_found += found
+                    page_manuals_new += new_count
 
                     if len(urls) >= max_results:
                         break
@@ -418,24 +720,21 @@ class AnvisaB2Downloader:
 
                 logger.info(
                     f"API ANVISA [{term} pág {page}]: {len(products)} produtos, "
-                    f"{page_manuals} manuais nesta página (total: {len(urls)})"
+                    f"{page_relevant} relevantes, {page_manuals_found} manuais "
+                    f"({page_manuals_new} novos, total: {len(urls)})"
                 )
 
-                if page_manuals == 0:
+                # Página vazia = nenhum produto relevante OU nenhum manual nos relevantes
+                if page_relevant == 0 or page_manuals_found == 0:
                     empty_pages += 1
                     if empty_pages >= max_empty_pages:
                         logger.info(
-                            f"Termo '{term}': {max_empty_pages} páginas seguidas sem manuais — próximo termo"
+                            f"Termo '{term}': {max_empty_pages} páginas seguidas sem "
+                            f"manuais em produtos relevantes — próximo termo"
                         )
                         break
                 else:
                     empty_pages = 0
-                    # Já processou manuais desta página (download sequencial) — próximo termo
-                    if on_manual:
-                        logger.info(
-                            f"Termo '{term}': {page_manuals} manuais na pág {page} — próximo termo"
-                        )
-                        break
 
                 if is_last:
                     break
@@ -520,16 +819,21 @@ class AnvisaB2Downloader:
     def _get_product_manuals(
         self, processo: str, nome_produto: str, search_term: Optional[str] = None
     ) -> List[Dict]:
-        """Obtém manuais PDF e metadados completos de um produto."""
+        """Obtém todos os anexos PDF e metadados completos de um produto."""
+        cache_key = str(processo)
+        if cache_key in self._product_manuals_cache:
+            return self._product_manuals_cache[cache_key]
+
         api_url = f"https://consultas.anvisa.gov.br/api/consulta/saude/{processo}"
         manuals: List[Dict] = []
 
-        # A API exige nomeProduto; tenta nome exato do produto e depois o termo de busca.
         param_candidates = [nome_produto]
         if search_term and search_term not in param_candidates:
             param_candidates.append(search_term)
 
         detail: Optional[Dict] = None
+        arquivos_by_key: Dict[str, Dict] = {}
+
         for param in param_candidates:
             try:
                 response = self.session.get(
@@ -537,18 +841,25 @@ class AnvisaB2Downloader:
                 )
                 if response.status_code != 200:
                     continue
-                detail = response.json()
-                if detail.get("arquivos"):
-                    break
+                data = response.json()
+                if not detail:
+                    detail = data
+                for arq in data.get("arquivos", []):
+                    key = arq.get("anexoCod") or arq.get("nomeArquivo") or arq.get("nomeCompleto")
+                    if key:
+                        arquivos_by_key[str(key)] = arq
             except Exception as e:
                 logger.debug(f"Erro ao obter anexos do processo {processo} ({param}): {e}")
 
         if not detail:
+            self._product_manuals_cache[cache_key] = manuals
             return manuals
 
         try:
-            for arq in detail.get("arquivos", []):
-                if not self._is_manual_attachment(arq):
+            arquivos = list(arquivos_by_key.values())
+            pdfs = [a for a in arquivos if self._is_pdf_attachment(a)]
+            for arq in arquivos:
+                if not self._is_downloadable_attachment(arq):
                     continue
 
                 anexo_cod = arq.get("anexoCod")
@@ -564,9 +875,16 @@ class AnvisaB2Downloader:
                 metadata = self._build_equipamento_metadata(detail, arq, download_url, pdf_filename)
                 manuals.append({"url": download_url, "metadata": metadata})
 
+            if pdfs and not manuals:
+                logger.debug(
+                    f"Processo {processo}: {len(pdfs)} PDF(s) ignorado(s) pelo filtro "
+                    f"({detail.get('produto')})"
+                )
+
         except Exception as e:
             logger.debug(f"Erro ao processar anexos do processo {processo}: {e}")
 
+        self._product_manuals_cache[cache_key] = manuals
         return manuals
 
     def _get_product_pdf_urls(self, processo: str, nome_produto: str) -> List[str]:
