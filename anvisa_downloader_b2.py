@@ -356,7 +356,9 @@ class AnvisaB2Downloader:
                             )
                             if on_manual:
                                 on_manual(url, manual["metadata"])
-                            print(f"TOTAL_FOUND:{len(urls)}", flush=True)
+                                print(f"TOTAL_FOUND:{len(urls)}", flush=True)
+                            else:
+                                print(f"TOTAL_FOUND:{len(urls)}", flush=True)
                             if len(urls) >= max_results:
                                 break
 
@@ -748,30 +750,28 @@ class AnvisaB2Downloader:
         
         try:
             collected: List[str] = []
-            pending_futures = []
 
-            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            def process_one(url: str, _metadata: Dict) -> None:
+                """Encontrou → grava equipamento → baixa → upload → próximo."""
+                filename = self._filename_from_url(url)
+                self._emit_equipamento(url, filename)
+                print(f"DOWNLOAD_START:{filename}:{url}", flush=True)
+                ok = self.download_and_upload_file(url, skip_announce=True)
+                if ok:
+                    logger.info(f"Concluído, indo para o próximo: {filename}")
+                else:
+                    logger.warning(f"Falha no download, indo para o próximo: {filename}")
 
-                def queue_manual(url: str, _metadata: Dict) -> None:
-                    filename = self._filename_from_url(url)
-                    self._emit_equipamento(url, filename)
-                    print(f"DOWNLOAD_START:{filename}:{url}", flush=True)
-                    pending_futures.append(
-                        executor.submit(self.download_and_upload_file, url, skip_announce=True)
-                    )
+            logger.info("Pipeline sequencial: encontrar → gravar equipamento → baixar → próximo")
 
-                collected = self.search_anvisa_pdfs(
-                    max_results=self.max_files or 100,
-                    on_manual=queue_manual,
-                )
+            collected = self.search_anvisa_pdfs(
+                max_results=self.max_files or 100,
+                on_manual=process_one,
+            )
 
             if not collected:
                 logger.warning("Nenhuma URL encontrada")
                 return
-
-            logger.info(f"Aguardando {len(pending_futures)} downloads em andamento...")
-            for future in as_completed(pending_futures):
-                future.result()
 
             self.generate_manifest(collected)
             
