@@ -172,7 +172,7 @@ export default function Equipamentos() {
               icon={<Database size={16} />}
               label="Faltam (catálogo)"
               value={formatNumber(faltam)}
-              sub={`${globalStats.percentCatalog.toFixed(2)}% coberto`}
+              sub={`${Number(globalStats.percentCatalog ?? 0).toFixed(2)}% coberto`}
             />
           </div>
 
@@ -189,7 +189,7 @@ export default function Equipamentos() {
               <div
                 className="absolute inset-y-0 left-0 rounded-full transition-all duration-700"
                 style={{
-                  width: `${Math.min(globalStats.percentCatalog, 100)}%`,
+                  width: `${Math.min(Number(globalStats.percentCatalog ?? 0), 100)}%`,
                   background:
                     "linear-gradient(90deg, oklch(0.60 0.28 240), oklch(0.45 0.30 270))",
                 }}

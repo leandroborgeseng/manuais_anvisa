@@ -65,8 +65,31 @@ function StatusBadge({ status }: { status: DashboardStats["status"] }) {
   );
 }
 
+function safeCount(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
 export default function Dashboard() {
   const { stats, connected } = useSSE();
+  const { data: storageStats } = trpc.storage.stats.useQuery(undefined, {
+    refetchInterval: 60_000,
+    retry: 1,
+  });
+
+  const totalFound = safeCount(stats.totalFound);
+  const totalCompleted = safeCount(stats.totalCompleted);
+  const totalErrors = safeCount(stats.totalErrors);
+  const percentComplete = safeCount(stats.percentComplete);
+
+  const b2TotalBytes =
+    storageStats?.b2?.totalBytes && storageStats.b2.totalBytes > 0
+      ? storageStats.b2.totalBytes
+      : storageStats?.db?.totalBytes ?? safeCount(stats.b2SpaceUsed);
+  const b2FileCount =
+    storageStats?.b2?.fileCount && storageStats.b2.fileCount > 0
+      ? storageStats.b2.fileCount
+      : storageStats?.db?.fileCount;
 
   const startMutation = trpc.process.start.useMutation({
     onSuccess: (r) => toast[r.success ? "success" : "error"](r.message),
@@ -89,16 +112,16 @@ export default function Dashboard() {
 
   // Pie chart data
   const pieData = [
-    { name: "Concluídos", value: stats.totalCompleted, color: "oklch(0.65 0.20 145)" },
-    { name: "Erros", value: stats.totalErrors, color: "oklch(0.60 0.25 25)" },
+    { name: "Concluídos", value: totalCompleted, color: "oklch(0.65 0.20 145)" },
+    { name: "Erros", value: totalErrors, color: "oklch(0.60 0.25 25)" },
     {
       name: "Pendentes",
-      value: Math.max(0, stats.totalFound - stats.totalCompleted - stats.totalErrors),
+      value: Math.max(0, totalFound - totalCompleted - totalErrors),
       color: "oklch(0.25 0.08 255)",
     },
   ].filter((d) => d.value > 0);
 
-  const hasData = stats.totalFound > 0;
+  const hasData = pieData.length > 0;
 
   return (
     <div className="p-8 space-y-8">
@@ -124,24 +147,24 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 xl:grid-cols-5 gap-4">
         <MetricCard
           label="Total Encontrado"
-          value={stats.totalFound.toLocaleString()}
+          value={totalFound.toLocaleString()}
           icon={<Download size={16} />}
           glowClass="glow-violet"
           valueClass="text-gradient-pink-violet"
         />
         <MetricCard
           label="Concluídos"
-          value={stats.totalCompleted.toLocaleString()}
-          sub={`${stats.percentComplete}% do total`}
+          value={totalCompleted.toLocaleString()}
+          sub={`${percentComplete}% do total`}
           icon={<CheckCircle2 size={16} />}
           glowClass="glow-green"
         />
         <MetricCard
           label="Erros"
-          value={stats.totalErrors.toLocaleString()}
+          value={totalErrors.toLocaleString()}
           icon={<AlertCircle size={16} />}
-          glowClass={stats.totalErrors > 0 ? "glow-pink" : ""}
-          valueClass={stats.totalErrors > 0 ? "text-red-400" : ""}
+          glowClass={totalErrors > 0 ? "glow-pink" : ""}
+          valueClass={totalErrors > 0 ? "text-red-400" : ""}
         />
         <MetricCard
           label="Velocidade"
@@ -152,7 +175,14 @@ export default function Dashboard() {
         />
         <MetricCard
           label="Espaço no B2"
-          value={formatBytes(stats.b2SpaceUsed)}
+          value={formatBytes(b2TotalBytes)}
+          sub={
+            b2FileCount !== undefined
+              ? `${b2FileCount.toLocaleString()} arquivo(s) no bucket`
+              : stats.b2SpaceUsed > 0
+                ? "nesta execução"
+                : undefined
+          }
           icon={<HardDrive size={16} />}
           glowClass="glow-blue"
         />
@@ -168,7 +198,7 @@ export default function Dashboard() {
               Progresso Geral
             </h2>
             <span className="font-display font-bold text-3xl text-gradient-pink-violet">
-              {stats.percentComplete}%
+              {percentComplete}%
             </span>
           </div>
 
@@ -177,7 +207,7 @@ export default function Dashboard() {
             <div
               className="absolute inset-y-0 left-0 rounded-full transition-all duration-700 ease-out"
               style={{
-                width: `${stats.percentComplete}%`,
+                width: `${percentComplete}%`,
 background: "linear-gradient(90deg, oklch(0.60 0.28 240), oklch(0.45 0.30 270))",
                     boxShadow: "0 0 20px oklch(0.60 0.28 240 / 0.6)",
               }}
@@ -186,7 +216,7 @@ background: "linear-gradient(90deg, oklch(0.60 0.28 240), oklch(0.45 0.30 270))"
               <div
                 className="absolute inset-y-0 left-0 rounded-full opacity-50"
                 style={{
-                  width: `${stats.percentComplete}%`,
+                  width: `${percentComplete}%`,
                   background: "linear-gradient(90deg, transparent, white 50%, transparent)",
                   animation: "shimmer 1.5s ease-in-out infinite",
                 }}
@@ -197,11 +227,11 @@ background: "linear-gradient(90deg, oklch(0.60 0.28 240), oklch(0.45 0.30 270))"
           {/* Sub-progress bars */}
           <div className="grid grid-cols-3 gap-3 mt-2">
             {[
-              { label: "Concluídos", count: stats.totalCompleted, color: "oklch(0.65 0.20 145)", bg: "bg-emerald-500/20 text-emerald-300" },
-              { label: "Erros", count: stats.totalErrors, color: "oklch(0.60 0.25 25)", bg: "bg-red-500/20 text-red-300" },
+              { label: "Concluídos", count: totalCompleted, color: "oklch(0.65 0.20 145)", bg: "bg-emerald-500/20 text-emerald-300" },
+              { label: "Erros", count: totalErrors, color: "oklch(0.60 0.25 25)", bg: "bg-red-500/20 text-red-300" },
               {
                 label: "Pendentes",
-                count: Math.max(0, stats.totalFound - stats.totalCompleted - stats.totalErrors),
+                count: Math.max(0, totalFound - totalCompleted - totalErrors),
                 color: "oklch(0.40 0.10 270)",
                 bg: "bg-white/10 text-white/50",
               },

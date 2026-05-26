@@ -182,7 +182,7 @@ export type InsertLog = typeof logs.$inferInsert;
 
 export const settings = pgTable("settings", {
   id: serial("id").primaryKey(),
-  maxFiles: integer("maxFiles").default(100).notNull(),
+  maxFiles: integer("maxFiles").default(10000).notNull(),
   maxWorkers: integer("maxWorkers").default(4).notNull(),
   cronExpression: varchar("cronExpression", { length: 128 }).default("0 2 1 * *").notNull(),
   b2BucketName: varchar("b2BucketName", { length: 256 }).default("anvisa-manuais").notNull(),

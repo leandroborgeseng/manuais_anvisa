@@ -497,6 +497,27 @@ export async function getEquipamentosStats(executionId?: number): Promise<{
   };
 }
 
+export async function getDownloadsStorageStats(): Promise<{
+  totalBytes: number;
+  fileCount: number;
+}> {
+  const db = await getDb();
+  if (!db) return { totalBytes: 0, fileCount: 0 };
+
+  const [row] = await db
+    .select({
+      totalBytes: sql<number>`coalesce(sum(${downloads.sizeBytes}), 0)::bigint`,
+      fileCount: sql<number>`count(*)::int`,
+    })
+    .from(downloads)
+    .where(eq(downloads.status, "concluído"));
+
+  return {
+    totalBytes: Number(row?.totalBytes ?? 0),
+    fileCount: row?.fileCount ?? 0,
+  };
+}
+
 export async function getEquipamentoByDownload(downloadId: number): Promise<Equipamento | undefined> {
   const db = await getDb();
   if (!db) return undefined;
@@ -558,7 +579,14 @@ export async function getSettings(): Promise<Settings | undefined> {
   const db = await getDb();
   if (!db) return undefined;
   const result = await db.select().from(settings).limit(1);
-  return result[0];
+  const row = result[0];
+  if (!row) return undefined;
+
+  const envMax = parseInt(process.env.MAX_FILES ?? "", 10);
+  if (Number.isFinite(envMax) && envMax >= 1) {
+    return { ...row, maxFiles: envMax };
+  }
+  return row;
 }
 
 export async function upsertSettings(
@@ -571,7 +599,7 @@ export async function upsertSettings(
     await db.update(settings).set(data).where(eq(settings.id, existing.id));
   } else {
     await db.insert(settings).values({
-      maxFiles: data.maxFiles ?? 100,
+      maxFiles: data.maxFiles ?? 10000,
       maxWorkers: data.maxWorkers ?? 4,
       cronExpression: data.cronExpression ?? "0 2 1 * *",
       b2BucketName: data.b2BucketName ?? "anvisa-manuais",

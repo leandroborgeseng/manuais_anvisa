@@ -1,6 +1,7 @@
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
-import { CheckCircle2, Loader2, Save, Settings } from "lucide-react";
+import { formatBytes } from "@/hooks/useSSE";
+import { CheckCircle2, HardDrive, Loader2, RefreshCw, Save } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -26,12 +27,18 @@ function FieldGroup({
 
 export default function SettingsPage() {
   const { data: settings, isLoading } = trpc.settings.get.useQuery();
+  const {
+    data: storageStats,
+    isLoading: storageLoading,
+    refetch: refetchStorage,
+    isFetching: storageFetching,
+  } = trpc.storage.stats.useQuery(undefined, { refetchInterval: 60_000, retry: 1 });
   const updateMutation = trpc.settings.update.useMutation({
     onSuccess: () => toast.success("Configurações salvas com sucesso!"),
     onError: () => toast.error("Erro ao salvar configurações."),
   });
 
-  const [maxFiles, setMaxFiles] = useState(100);
+  const [maxFiles, setMaxFiles] = useState(10000);
   const [maxWorkers, setMaxWorkers] = useState(4);
   const [cronExpression, setCronExpression] = useState("0 2 1 * *");
   const [b2BucketName, setB2BucketName] = useState("anvisa-manuais");
@@ -99,12 +106,29 @@ export default function SettingsPage() {
             <input
               type="range"
               min={1}
-              max={1000}
-              value={maxFiles}
+              max={10000}
+              value={Math.min(maxFiles, 10000)}
               onChange={(e) => setMaxFiles(Number(e.target.value))}
               className="flex-1 accent-pink-500"
             />
-            <span className="text-sm text-white/50 w-16 text-right">{maxFiles} arquivos</span>
+            <span className="text-sm text-white/50 w-20 text-right">{maxFiles.toLocaleString()} arquivos</span>
+          </div>
+          <div className="flex flex-wrap gap-2 mt-2">
+            {[100, 500, 1000, 5000, 10000].map((n) => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => setMaxFiles(n)}
+                className={cn(
+                  "px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
+                  maxFiles === n
+                    ? "bg-pink-500/30 text-pink-300 border border-pink-500/40"
+                    : "bg-white/5 text-white/40 hover:bg-white/10 hover:text-white/70"
+                )}
+              >
+                {n.toLocaleString()}
+              </button>
+            ))}
           </div>
         </FieldGroup>
 
@@ -158,6 +182,72 @@ export default function SettingsPage() {
             placeholder="anvisa-manuais"
             className="glass-card px-4 py-2.5 text-sm text-white w-full outline-none border-white/10 focus:border-pink-500/50 transition-colors"
           />
+        </FieldGroup>
+
+        <FieldGroup
+          label="Uso de Armazenamento"
+          description="Espaço ocupado no bucket Backblaze B2 (compatível com API S3)"
+        >
+          {storageLoading ? (
+            <div className="flex items-center gap-2 text-white/40 text-sm">
+              <Loader2 size={14} className="animate-spin" />
+              Consultando bucket…
+            </div>
+          ) : storageStats ? (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <HardDrive size={20} className="text-blue-400 shrink-0" />
+                  <div>
+                    <div className="font-display font-bold text-2xl text-white">
+                      {formatBytes(storageStats.b2?.totalBytes || storageStats.db?.totalBytes || 0)}
+                    </div>
+                    <div className="text-xs text-white/40 mt-0.5">
+                      {(storageStats.b2?.fileCount || storageStats.db?.fileCount || 0).toLocaleString()} arquivo(s)
+                      {storageStats.b2?.configured
+                        ? " no bucket"
+                        : " registrados no banco"}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => refetchStorage()}
+                  disabled={storageFetching}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-white/50 bg-white/5 hover:bg-white/10 transition-colors disabled:opacity-50"
+                >
+                  <RefreshCw size={12} className={storageFetching ? "animate-spin" : ""} />
+                  Atualizar
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="glass-card p-3 bg-white/5">
+                  <div className="text-white/40">Bucket B2</div>
+                  <div className="text-white font-semibold mt-1">
+                    {storageStats.b2?.configured
+                      ? formatBytes(storageStats.b2.totalBytes)
+                      : "Não configurado"}
+                  </div>
+                  <div className="text-white/30 mt-0.5">{storageStats.bucketName}</div>
+                </div>
+                <div className="glass-card p-3 bg-white/5">
+                  <div className="text-white/40">Registros concluídos</div>
+                  <div className="text-white font-semibold mt-1">
+                    {formatBytes(storageStats.db?.totalBytes ?? 0)}
+                  </div>
+                  <div className="text-white/30 mt-0.5">
+                    {(storageStats.db?.fileCount ?? 0).toLocaleString()} download(s)
+                  </div>
+                </div>
+              </div>
+              {storageStats.b2?.error && (
+                <p className="text-xs text-yellow-400/80">
+                  Não foi possível listar o bucket: {storageStats.b2.error}. Verifique B2_S3_REGION
+                  (padrão us-west-004).
+                </p>
+              )}
+            </div>
+          ) : null}
         </FieldGroup>
       </div>
 

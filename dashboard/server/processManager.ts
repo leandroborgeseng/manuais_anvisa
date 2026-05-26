@@ -99,7 +99,7 @@ class ProcessManager extends EventEmitter {
     }
 
     const cfg = await getSettings();
-    const maxFiles = cfg?.maxFiles ?? 100;
+    const maxFiles = cfg?.maxFiles ?? 10000;
     const maxWorkers = cfg?.maxWorkers ?? 4;
 
     // Create execution record
@@ -377,16 +377,20 @@ class ProcessManager extends EventEmitter {
       const parts = line.split(":");
       const filename = parts[1];
       const b2Key = parts[2];
+      const sizeBytes = parseInt(parts[3] || "0", 10) || 0;
       const item = this.stats.downloads.find((d) => d.filename === filename);
       if (item) {
         item.status = "concluído";
         item.progress = 100;
         if (b2Key) item.b2Key = b2Key;
+        if (sizeBytes > 0) item.sizeBytes = sizeBytes;
         this.stats.totalCompleted++;
+        if (sizeBytes > 0) this.stats.b2SpaceUsed += sizeBytes;
         await updateDownload(item.id, {
           status: "concluído",
           progress: 100,
           b2Key: b2Key ?? undefined,
+          sizeBytes: sizeBytes > 0 ? sizeBytes : undefined,
           completedAt: new Date(),
         }).catch(() => undefined);
       }
@@ -505,7 +509,12 @@ class ProcessManager extends EventEmitter {
               item.b2Key = `manuais/2026/05/${item.filename}`;
               this.stats.totalCompleted++;
               this.stats.b2SpaceUsed += item.sizeBytes;
-              await updateDownload(item.id, { status: "concluído", b2Key: item.b2Key, completedAt: new Date() });
+              await updateDownload(item.id, {
+                status: "concluído",
+                b2Key: item.b2Key,
+                sizeBytes: item.sizeBytes,
+                completedAt: new Date(),
+              });
               await insertLog({ executionId: execId, level: "INFO", message: `Concluído: ${item.filename}` });
             }
 

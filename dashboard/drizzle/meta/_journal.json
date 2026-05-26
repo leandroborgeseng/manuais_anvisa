@@ -29,6 +29,13 @@
       "when": 1779720000000,
       "tag": "0003_registros_anvisa_catalog",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1779800000000,
+      "tag": "0004_max_files_10000",
+      "breakpoints": true
     }
   ]
 }

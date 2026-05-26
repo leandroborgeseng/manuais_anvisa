@@ -3,9 +3,10 @@ import { z } from "zod";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
-import { getSettings, insertLog, listEquipamentos, getEquipamentosStats, listExecutions, listLogs, upsertSettings, listRegistrosAnvisa, getRegistrosStats, listCatalogSyncs, countRegistrosAnvisa } from "./db";
+import { getSettings, insertLog, listEquipamentos, getEquipamentosStats, getDownloadsStorageStats, listExecutions, listLogs, upsertSettings, listRegistrosAnvisa, getRegistrosStats, listCatalogSyncs, countRegistrosAnvisa } from "./db";
 import { processManager } from "./processManager";
 import { catalogManager } from "./catalogManager";
+import { getB2BucketStats } from "./b2Storage";
 
 export const appRouter = router({
   system: systemRouter,
@@ -70,6 +71,32 @@ export const appRouter = router({
       }),
   }),
 
+  // ─── Armazenamento B2 ──────────────────────────────────────────────────────
+  storage: router({
+    stats: publicProcedure.query(async () => {
+      const settings = await getSettings();
+      const bucketName =
+        settings?.b2BucketName ?? process.env.B2_BUCKET_NAME ?? "anvisa-manuais";
+      const [dbStats, b2Stats] = await Promise.all([
+        getDownloadsStorageStats(),
+        getB2BucketStats(bucketName),
+      ]);
+
+      return {
+        bucketName,
+        db: dbStats,
+        b2: {
+          configured: b2Stats.configured,
+          totalBytes: b2Stats.totalBytes,
+          fileCount: b2Stats.fileCount,
+          prefix: b2Stats.prefix,
+          scannedAt: b2Stats.scannedAt,
+          error: b2Stats.error,
+        },
+      };
+    }),
+  }),
+
   // ─── Settings ──────────────────────────────────────────────────────────────
   settings: router({
     get: publicProcedure.query(async () => {
@@ -77,7 +104,7 @@ export const appRouter = router({
       return (
         s ?? {
           id: 1,
-          maxFiles: 100,
+          maxFiles: 10000,
           maxWorkers: 4,
           cronExpression: "0 2 1 * *",
           b2BucketName: "anvisa-manuais",
@@ -117,7 +144,7 @@ export const appRouter = router({
   // ─── Equipamentos (metadados ANVISA) ───────────────────────────────────────
   equipamentos: router({
     stats: publicProcedure
-      .input(z.object({ executionId: z.number().optional() }).optional())
+      .input(z.object({ executionId: z.number().optional() }).nullish())
       .query(async ({ input }) => {
         return getEquipamentosStats(input?.executionId);
       }),

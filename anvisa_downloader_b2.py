@@ -8,7 +8,7 @@ Variáveis de ambiente necessárias:
     B2_APPLICATION_KEY_ID: ID da chave de aplicação B2
     B2_APPLICATION_KEY: Chave de aplicação B2
     B2_BUCKET_NAME: Nome do bucket B2
-    MAX_FILES: Limite de arquivos (padrão: 100)
+    MAX_FILES: Limite de arquivos (padrão: 10000)
     RAILWAY_ENVIRONMENT_NAME: Ambiente do Railway (opcional)
 
 Instalação:
@@ -1040,7 +1040,7 @@ class AnvisaB2Downloader:
                         )
                     equip_meta["b2MetaKey"] = meta_path
                     print(f"EQUIPAMENTO {json.dumps(equip_meta, ensure_ascii=False)}", flush=True)
-                    print(f"COMPLETED:{filename}:{b2_path}", flush=True)
+                    print(f"COMPLETED:{filename}:{b2_path}:{file_size}", flush=True)
                 else:
                     logger.error(f"Falha ao fazer upload para B2: {b2_path}")
                     return False
@@ -1049,7 +1049,7 @@ class AnvisaB2Downloader:
             self.progress["downloaded_files"] += 1
             self._save_progress()
             if not self.b2_manager:
-                print(f"COMPLETED:{filename}:local", flush=True)
+                print(f"COMPLETED:{filename}:local:{file_size}", flush=True)
             
             return True
             
@@ -1198,7 +1198,7 @@ def main():
     b2_app_key_id = os.getenv('B2_APPLICATION_KEY_ID')
     b2_app_key = os.getenv('B2_APPLICATION_KEY')
     b2_bucket_name = os.getenv('B2_BUCKET_NAME')
-    max_files = args.max_files or int(os.getenv('MAX_FILES', 100))
+    max_files = args.max_files or int(os.getenv('MAX_FILES', 10000))
     
     # Criar gerenciador B2 se credenciais disponíveis
     b2_manager = None
