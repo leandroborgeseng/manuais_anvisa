@@ -185,7 +185,7 @@ export const settings = pgTable("settings", {
   maxFiles: integer("maxFiles").default(10000).notNull(),
   maxWorkers: integer("maxWorkers").default(4).notNull(),
   cronExpression: varchar("cronExpression", { length: 128 }).default("0 2 1 * *").notNull(),
-  b2BucketName: varchar("b2BucketName", { length: 256 }).default("anvisa-manuais").notNull(),
+  b2BucketName: varchar("b2BucketName", { length: 256 }).default("discorailway").notNull(),
   updatedAt: timestamp("updatedAt", { mode: "date" })
     .defaultNow()
     .notNull()

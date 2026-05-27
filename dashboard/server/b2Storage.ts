@@ -5,6 +5,7 @@
 
 export interface B2BucketStats {
   configured: boolean;
+  ok: boolean;
   totalBytes: number;
   fileCount: number;
   prefix: string;
@@ -103,6 +104,58 @@ async function resolveBucketId(
   return match.bucketId;
 }
 
+/** Escolhe o bucket correto: chave restrita → env → settings → primeiro disponível. */
+export async function resolveB2BucketName(preferred?: string): Promise<{
+  bucketName: string;
+  availableBuckets: string[];
+  source: "key" | "env" | "settings" | "fallback";
+}> {
+  const keyId = trimEnv(process.env.B2_APPLICATION_KEY_ID);
+  const appKey = trimEnv(process.env.B2_APPLICATION_KEY);
+  const envName = trimEnv(process.env.B2_BUCKET_NAME);
+  const preferredName = trimEnv(preferred);
+
+  if (!keyId || !appKey) {
+    const fallback = envName ?? preferredName ?? "";
+    return { bucketName: fallback, availableBuckets: [], source: "env" };
+  }
+
+  const auth = await b2Authorize(keyId, appKey);
+
+  if (auth.allowed?.bucketName) {
+    return {
+      bucketName: auth.allowed.bucketName,
+      availableBuckets: [auth.allowed.bucketName],
+      source: "key",
+    };
+  }
+
+  const buckets = await b2ListBuckets(auth.apiUrl, auth.authorizationToken, auth.accountId);
+  const names = buckets.map((b) => b.bucketName);
+
+  const tryOrder: Array<{ name: string; source: "env" | "settings" }> = [];
+  if (envName) tryOrder.push({ name: envName, source: "env" });
+  if (preferredName && preferredName !== envName) {
+    tryOrder.push({ name: preferredName, source: "settings" });
+  }
+
+  for (const { name, source } of tryOrder) {
+    if (names.includes(name)) {
+      return { bucketName: name, availableBuckets: names, source };
+    }
+  }
+
+  if (names[0]) {
+    return { bucketName: names[0], availableBuckets: names, source: "fallback" };
+  }
+
+  return {
+    bucketName: preferredName ?? envName ?? "",
+    availableBuckets: names,
+    source: "fallback",
+  };
+}
+
 async function b2ListAllFiles(
   apiUrl: string,
   authToken: string,
@@ -149,11 +202,12 @@ async function b2ListAllFiles(
 }
 
 export async function getB2BucketStats(
-  bucketName: string,
+  preferredBucket?: string,
   prefix = "manuais/"
 ): Promise<B2BucketStats> {
+  const { bucketName } = await resolveB2BucketName(preferredBucket);
   const now = Date.now();
-  if (cache && cache.expiresAt > now && cache.stats.bucketName === bucketName) {
+  if (cache && cache.expiresAt > now && cache.stats.bucketName === bucketName && cache.stats.ok) {
     return cache.stats;
   }
 
@@ -163,11 +217,13 @@ export async function getB2BucketStats(
   if (!keyId || !appKey || !bucketName) {
     return {
       configured: false,
+      ok: false,
       totalBytes: 0,
       fileCount: 0,
       prefix,
       bucketName: bucketName || "",
       scannedAt: new Date(),
+      error: !bucketName ? "Nome do bucket não configurado." : undefined,
     };
   }
 
@@ -183,6 +239,7 @@ export async function getB2BucketStats(
 
     const stats: B2BucketStats = {
       configured: true,
+      ok: true,
       totalBytes,
       fileCount,
       prefix,
@@ -198,11 +255,12 @@ export async function getB2BucketStats(
 
     const hint =
       message.includes("not valid") || message.includes("unauthorized")
-        ? " Verifique B2_APPLICATION_KEY_ID e B2_APPLICATION_KEY no Railway (a chave com '+' deve ser colada sem aspas extras; se falhar, gere nova chave)."
+        ? " Verifique B2_APPLICATION_KEY_ID e B2_APPLICATION_KEY no Railway."
         : "";
 
     return {
       configured: true,
+      ok: false,
       totalBytes: 0,
       fileCount: 0,
       prefix,

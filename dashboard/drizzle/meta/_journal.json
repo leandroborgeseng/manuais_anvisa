@@ -36,6 +36,13 @@
       "when": 1779800000000,
       "tag": "0004_max_files_10000",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1779900000000,
+      "tag": "0005_fix_b2_bucket_name",
+      "breakpoints": true
     }
   ]
 }

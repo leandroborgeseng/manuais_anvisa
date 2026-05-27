@@ -6,7 +6,7 @@ import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import { getSettings, insertLog, listEquipamentos, getEquipamentosStats, getDownloadsStorageStats, listExecutions, listLogs, upsertSettings, listRegistrosAnvisa, getRegistrosStats, listCatalogSyncs, countRegistrosAnvisa } from "./db";
 import { processManager } from "./processManager";
 import { catalogManager } from "./catalogManager";
-import { getB2BucketStats } from "./b2Storage";
+import { getB2BucketStats, resolveB2BucketName } from "./b2Storage";
 
 export const appRouter = router({
   system: systemRouter,
@@ -75,8 +75,14 @@ export const appRouter = router({
   storage: router({
     stats: publicProcedure.query(async () => {
       const settings = await getSettings();
-      const bucketName =
-        settings?.b2BucketName ?? process.env.B2_BUCKET_NAME ?? "anvisa-manuais";
+      const settingsBucket = settings?.b2BucketName;
+      const resolved = await resolveB2BucketName(settingsBucket);
+      const bucketName = resolved.bucketName;
+
+      if (settingsBucket && settingsBucket !== bucketName) {
+        await upsertSettings({ b2BucketName: bucketName }).catch(() => undefined);
+      }
+
       const [dbStats, b2Stats] = await Promise.all([
         getDownloadsStorageStats(),
         getB2BucketStats(bucketName),
@@ -84,9 +90,13 @@ export const appRouter = router({
 
       return {
         bucketName,
+        bucketSource: resolved.source,
+        settingsBucketName: settingsBucket ?? null,
+        availableBuckets: resolved.availableBuckets,
         db: dbStats,
         b2: {
           configured: b2Stats.configured,
+          ok: b2Stats.ok,
           totalBytes: b2Stats.totalBytes,
           fileCount: b2Stats.fileCount,
           prefix: b2Stats.prefix,
@@ -107,7 +117,7 @@ export const appRouter = router({
           maxFiles: 10000,
           maxWorkers: 4,
           cronExpression: "0 2 1 * *",
-          b2BucketName: "anvisa-manuais",
+          b2BucketName: "discorailway",
           updatedAt: new Date(),
         }
       );

@@ -41,7 +41,7 @@ export default function SettingsPage() {
   const [maxFiles, setMaxFiles] = useState(10000);
   const [maxWorkers, setMaxWorkers] = useState(4);
   const [cronExpression, setCronExpression] = useState("0 2 1 * *");
-  const [b2BucketName, setB2BucketName] = useState("anvisa-manuais");
+  const [b2BucketName, setB2BucketName] = useState("discorailway");
 
   useEffect(() => {
     if (settings) {
@@ -179,14 +179,14 @@ export default function SettingsPage() {
             type="text"
             value={b2BucketName}
             onChange={(e) => setB2BucketName(e.target.value)}
-            placeholder="anvisa-manuais"
+            placeholder="discorailway"
             className="glass-card px-4 py-2.5 text-sm text-white w-full outline-none border-white/10 focus:border-pink-500/50 transition-colors"
           />
         </FieldGroup>
 
         <FieldGroup
           label="Uso de Armazenamento"
-          description="Espaço ocupado no bucket Backblaze B2 (compatível com API S3)"
+          description="Leitura direta do bucket Backblaze B2 (pasta manuais/)"
         >
           {storageLoading ? (
             <div className="flex items-center gap-2 text-white/40 text-sm">
@@ -195,24 +195,37 @@ export default function SettingsPage() {
             </div>
           ) : storageStats ? (
             <div className="space-y-3">
+              {storageStats.settingsBucketName &&
+                storageStats.settingsBucketName !== storageStats.bucketName && (
+                  <p className="text-xs text-amber-400/90 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+                    Bucket corrigido automaticamente: &quot;{storageStats.settingsBucketName}&quot; →{" "}
+                    <span className="font-semibold">{storageStats.bucketName}</span>
+                  </p>
+                )}
               <div className="flex items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
                   <HardDrive size={20} className="text-blue-400 shrink-0" />
                   <div>
                     <div className="font-display font-bold text-2xl text-white">
-                      {formatBytes(storageStats.b2?.totalBytes || storageStats.db?.totalBytes || 0)}
+                      {formatBytes(
+                        storageStats.b2.ok
+                          ? storageStats.b2.totalBytes
+                          : storageStats.db.totalBytes
+                      )}
                     </div>
                     <div className="text-xs text-white/40 mt-0.5">
-                      {(storageStats.b2?.fileCount || storageStats.db?.fileCount || 0).toLocaleString()} arquivo(s)
-                      {storageStats.b2?.configured
-                        ? " no bucket"
-                        : " registrados no banco"}
+                      {(storageStats.b2.ok
+                        ? storageStats.b2.fileCount
+                        : storageStats.db.fileCount
+                      ).toLocaleString("pt-BR")}{" "}
+                      arquivo(s)
+                      {storageStats.b2.ok ? ` no bucket ${storageStats.bucketName}` : " no banco"}
                     </div>
                   </div>
                 </div>
                 <button
                   type="button"
-                  onClick={() => refetchStorage()}
+                  onClick={() => void refetchStorage()}
                   disabled={storageFetching}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-white/50 bg-white/5 hover:bg-white/10 transition-colors disabled:opacity-50"
                 >
@@ -222,29 +235,39 @@ export default function SettingsPage() {
               </div>
               <div className="grid grid-cols-2 gap-2 text-xs">
                 <div className="glass-card p-3 bg-white/5">
-                  <div className="text-white/40">Bucket B2</div>
+                  <div className="text-white/40">Bucket B2 (real)</div>
                   <div className="text-white font-semibold mt-1">
-                    {storageStats.b2?.configured
+                    {storageStats.b2.ok
                       ? formatBytes(storageStats.b2.totalBytes)
-                      : "Não configurado"}
+                      : "—"}
                   </div>
-                  <div className="text-white/30 mt-0.5">{storageStats.bucketName}</div>
+                  <div className="text-white/30 mt-0.5 font-mono">{storageStats.bucketName}</div>
+                  {storageStats.b2.ok && (
+                    <div className="text-white/25 mt-1">
+                      {storageStats.b2.fileCount.toLocaleString("pt-BR")} arquivos em{" "}
+                      {storageStats.b2.prefix}
+                    </div>
+                  )}
                 </div>
                 <div className="glass-card p-3 bg-white/5">
-                  <div className="text-white/40">Registros concluídos</div>
+                  <div className="text-white/40">Registros no banco</div>
                   <div className="text-white font-semibold mt-1">
-                    {formatBytes(storageStats.db?.totalBytes ?? 0)}
+                    {formatBytes(storageStats.db.totalBytes)}
                   </div>
                   <div className="text-white/30 mt-0.5">
-                    {(storageStats.db?.fileCount ?? 0).toLocaleString()} download(s)
+                    {storageStats.db.fileCount.toLocaleString("pt-BR")} download(s) concluídos
                   </div>
                 </div>
               </div>
-              {storageStats.b2?.error && (
+              {storageStats.b2.error && !storageStats.b2.ok && (
                 <p className="text-xs text-yellow-400/80">
-                  Não foi possível listar o bucket: {storageStats.b2.error}. Confira B2_APPLICATION_KEY_ID,
-                  B2_APPLICATION_KEY e B2_BUCKET_NAME no Railway (a chave com &quot;+&quot; deve ser colada
-                  exatamente como no painel B2).
+                  Listagem do bucket falhou: {storageStats.b2.error}
+                  {storageStats.availableBuckets.length > 0 && (
+                    <>
+                      {" "}
+                      Buckets da conta: {storageStats.availableBuckets.join(", ")}.
+                    </>
+                  )}
                 </p>
               )}
             </div>

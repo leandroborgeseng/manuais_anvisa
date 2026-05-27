@@ -83,13 +83,14 @@ export default function Dashboard() {
   const percentComplete = safeCount(stats.percentComplete);
 
   const b2TotalBytes =
-    storageStats?.b2?.totalBytes && storageStats.b2.totalBytes > 0
+    storageStats?.b2.ok && storageStats.b2.totalBytes > 0
       ? storageStats.b2.totalBytes
       : storageStats?.db?.totalBytes ?? safeCount(stats.b2SpaceUsed);
   const b2FileCount =
-    storageStats?.b2?.fileCount && storageStats.b2.fileCount > 0
+    storageStats?.b2.ok && storageStats.b2.fileCount > 0
       ? storageStats.b2.fileCount
       : storageStats?.db?.fileCount;
+  const b2Label = storageStats?.b2.ok ? storageStats.bucketName : undefined;
 
   const startMutation = trpc.process.start.useMutation({
     onSuccess: (r) => toast[r.success ? "success" : "error"](r.message),
@@ -178,7 +179,9 @@ export default function Dashboard() {
           value={formatBytes(b2TotalBytes)}
           sub={
             b2FileCount !== undefined
-              ? `${b2FileCount.toLocaleString()} arquivo(s) no bucket`
+              ? storageStats?.b2.ok
+                ? `${b2FileCount.toLocaleString()} arquivo(s) · ${b2Label}`
+                : `${b2FileCount.toLocaleString()} arquivo(s) (banco)`
               : stats.b2SpaceUsed > 0
                 ? "nesta execução"
                 : undefined
