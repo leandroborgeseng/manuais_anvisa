@@ -242,8 +242,9 @@ export default function SettingsPage() {
               </div>
               {storageStats.b2?.error && (
                 <p className="text-xs text-yellow-400/80">
-                  Não foi possível listar o bucket: {storageStats.b2.error}. Verifique B2_S3_REGION
-                  (padrão us-west-004).
+                  Não foi possível listar o bucket: {storageStats.b2.error}. Confira B2_APPLICATION_KEY_ID,
+                  B2_APPLICATION_KEY e B2_BUCKET_NAME no Railway (a chave com &quot;+&quot; deve ser colada
+                  exatamente como no painel B2).
                 </p>
               )}
             </div>
