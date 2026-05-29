@@ -75,6 +75,10 @@ export default function Dashboard() {
   const { data: progress } = trpc.dashboard.overallProgress.useQuery(undefined, {
     refetchInterval: 30_000,
   });
+  const { data: storageStats } = trpc.storage.stats.useQuery(undefined, {
+    refetchInterval: 60_000,
+    retry: 1,
+  });
   const { data: scheduler } = trpc.dashboard.scheduler.useQuery(undefined, {
     refetchInterval: 15_000,
   });
