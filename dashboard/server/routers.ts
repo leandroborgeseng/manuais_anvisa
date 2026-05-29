@@ -7,6 +7,8 @@ import { getSettings, insertLog, listEquipamentos, getEquipamentosStats, getDown
 import { processManager } from "./processManager";
 import { catalogManager } from "./catalogManager";
 import { getB2BucketStats, resolveB2BucketName } from "./b2Storage";
+import { getOverallProgress } from "./progress";
+import { getSchedulerStatus } from "./scheduler";
 
 export const appRouter = router({
   system: systemRouter,
@@ -24,6 +26,14 @@ export const appRouter = router({
   dashboard: router({
     stats: publicProcedure.query(async () => {
       return processManager.getStats();
+    }),
+
+    overallProgress: publicProcedure.query(async () => {
+      return getOverallProgress();
+    }),
+
+    scheduler: publicProcedure.query(() => {
+      return getSchedulerStatus();
     }),
   }),
 
@@ -118,6 +128,8 @@ export const appRouter = router({
           maxWorkers: 4,
           cronExpression: "0 2 1 * *",
           b2BucketName: "discorailway",
+          autoRunEnabled: true,
+          autoRunDelayMinutes: 10,
           updatedAt: new Date(),
         }
       );
@@ -130,6 +142,8 @@ export const appRouter = router({
           maxWorkers: z.number().min(1).max(32).optional(),
           cronExpression: z.string().optional(),
           b2BucketName: z.string().optional(),
+          autoRunEnabled: z.boolean().optional(),
+          autoRunDelayMinutes: z.number().min(1).max(1440).optional(),
         })
       )
       .mutation(async ({ input }) => {

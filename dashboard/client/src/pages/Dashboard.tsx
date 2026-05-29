@@ -72,9 +72,11 @@ function safeCount(value: unknown): number {
 
 export default function Dashboard() {
   const { stats, connected } = useSSE();
-  const { data: storageStats } = trpc.storage.stats.useQuery(undefined, {
-    refetchInterval: 60_000,
-    retry: 1,
+  const { data: progress } = trpc.dashboard.overallProgress.useQuery(undefined, {
+    refetchInterval: 30_000,
+  });
+  const { data: scheduler } = trpc.dashboard.scheduler.useQuery(undefined, {
+    refetchInterval: 15_000,
   });
 
   const totalFound = safeCount(stats.totalFound);
@@ -143,6 +145,70 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+
+      {/* Progresso acumulado (histórico total) */}
+      {progress && (
+        <div className="glass-card p-6 space-y-4 border border-blue-500/20">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h2 className="font-display font-semibold text-lg text-white flex items-center gap-2">
+                <TrendingUp size={18} className="text-blue-400" />
+                Progresso total acumulado
+              </h2>
+              <p className="text-xs text-white/40 mt-1">
+                Modo autônomo 24h — não é necessário clicar em Iniciar a cada lote
+              </p>
+            </div>
+            {scheduler?.lastMessage && (
+              <p className="text-xs text-white/50 max-w-md text-right">{scheduler.lastMessage}</p>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <MetricCard
+              label="Armazenado"
+              value={formatBytes(progress.bytesBaixados)}
+              sub={`${progress.arquivosPdf.toLocaleString("pt-BR")} PDFs · fonte ${progress.bytesFonte.toUpperCase()}`}
+              icon={<HardDrive size={16} />}
+              glowClass="glow-blue"
+            />
+            <MetricCard
+              label="Catálogo ANVISA"
+              value={`${progress.percentCatalogo.toFixed(2)}%`}
+              sub={`${progress.equipamentosComManual.toLocaleString("pt-BR")} / ${progress.catalogoTotal.toLocaleString("pt-BR")} equipamentos`}
+              icon={<Download size={16} />}
+              glowClass="glow-violet"
+              valueClass="text-gradient-pink-violet"
+            />
+            <MetricCard
+              label="Projeção total"
+              value={progress.projecaoLabel}
+              sub="se cobrir todo o catálogo no ritmo atual"
+              icon={<TrendingUp size={16} />}
+            />
+            <MetricCard
+              label="Execuções"
+              value={progress.totalExecucoes.toLocaleString("pt-BR")}
+              sub={`${progress.faltamEquipamentos.toLocaleString("pt-BR")} equipamentos faltando`}
+              icon={<CheckCircle2 size={16} />}
+            />
+          </div>
+
+          <div className="relative h-3 bg-white/10 rounded-full overflow-hidden">
+            <div
+              className="absolute inset-y-0 left-0 rounded-full transition-all duration-700"
+              style={{
+                width: `${Math.min(progress.percentCatalogo, 100)}%`,
+                background:
+                  "linear-gradient(90deg, oklch(0.55 0.22 220), oklch(0.45 0.28 270))",
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Lote atual */}
+      <p className="text-xs text-white/30 uppercase tracking-widest">Lote em execução agora</p>
 
       {/* Metric cards */}
       <div className="grid grid-cols-2 xl:grid-cols-5 gap-4">

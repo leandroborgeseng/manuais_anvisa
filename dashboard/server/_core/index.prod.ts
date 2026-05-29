@@ -8,6 +8,7 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic } from "./static";
 import { processManager } from "../processManager";
+import { initScheduler } from "../scheduler";
 
 async function startServer() {
   console.log("=== ANVISA Dashboard Server Starting ===");
@@ -67,6 +68,7 @@ async function startServer() {
 
   server.listen(port, host, () => {
     console.log(`=== Server listening on ${host}:${port} ===`);
+    initScheduler();
   });
 
   server.on("error", (err) => {

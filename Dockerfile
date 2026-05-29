@@ -43,6 +43,7 @@ ENV NODE_ENV=production
 ENV ANVISA_SCRIPT_PATH=/app/scripts/anvisa_downloader_b2.py
 ENV ANVISA_CATALOG_SCRIPT_PATH=/app/scripts/anvisa_catalog_sync.py
 ENV ANVISA_OPEN_DATA_VERIFY_SSL=false
+ENV ANVISA_AUTO_RUN=true
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 3000

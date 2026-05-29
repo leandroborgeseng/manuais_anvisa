@@ -76,6 +76,7 @@ class ProcessManager extends EventEmitter {
   private lastBytes = 0;
   private stdoutBuffer = "";
   private stderrBuffer = "";
+  private userStopped = false;
 
   getStats(): DashboardStats {
     return { ...this.stats };
@@ -98,6 +99,7 @@ class ProcessManager extends EventEmitter {
       };
     }
 
+    this.userStopped = false;
     const cfg = await getSettings();
     const maxFiles = cfg?.maxFiles ?? 10000;
     const maxWorkers = cfg?.maxWorkers ?? 4;
@@ -148,12 +150,25 @@ class ProcessManager extends EventEmitter {
     };
 
     try {
-      this.process = spawn("python3", [scriptPath, "--max-files", String(maxFiles)], {
-        env,
-        stdio: ["pipe", "pipe", "pipe"],
-      });
+      this.process = spawn(
+        "python3",
+        [scriptPath, "--max-files", String(maxFiles), "--max-workers", String(maxWorkers)],
+        {
+          env,
+          stdio: ["pipe", "pipe", "pipe"],
+        }
+      );
     } catch {
-      // If real script not found, use simulation mode
+      if (process.env.NODE_ENV === "production") {
+        this.status = "error";
+        await insertLog({
+          executionId: execId,
+          level: "ERROR",
+          message: "Script Python não encontrado em produção.",
+        });
+        this.emitUpdate();
+        return { success: false, message: "Script de download não encontrado." };
+      }
       this.simulateProcess(execId, maxFiles);
       return { success: true, message: "Processo iniciado em modo simulação." };
     }
@@ -171,7 +186,16 @@ class ProcessManager extends EventEmitter {
     });
 
     this.process.on("error", () => {
-      // Script not found, fall back to simulation
+      if (process.env.NODE_ENV === "production") {
+        this.status = "error";
+        void insertLog({
+          executionId: execId,
+          level: "ERROR",
+          message: "Falha ao iniciar processo Python.",
+        });
+        this.emitUpdate();
+        return;
+      }
       this.process = null;
       this.simulateProcess(execId, maxFiles);
     });
@@ -212,6 +236,9 @@ class ProcessManager extends EventEmitter {
     if (this.status === "idle" || this.status === "stopped") {
       return { success: false, message: "Processo não está ativo." };
     }
+    this.userStopped = true;
+    const { cancelScheduledBatch } = await import("./scheduler");
+    cancelScheduledBatch();
     this.status = "stopped";
     if (this.process) {
       this.process.kill("SIGTERM");
@@ -417,6 +444,18 @@ class ProcessManager extends EventEmitter {
   }
 
   private async handleClose(code: number | null, execId: number) {
+    if (this.userStopped) {
+      this.userStopped = false;
+      this.process = null;
+      await insertLog({
+        executionId: execId,
+        level: "WARNING",
+        message: "Processo interrompido (sem reagendamento automático).",
+      });
+      this.emitUpdate();
+      return;
+    }
+
     const finalStatus = code === 0 ? "completed" : "error";
     this.status = finalStatus as ProcessStatus;
     this.process = null;
@@ -427,6 +466,7 @@ class ProcessManager extends EventEmitter {
       message: `Processo finalizado com código ${code}.`,
     });
     this.emitUpdate();
+    this.emit("batchFinished", { code, execId, status: finalStatus });
   }
 
   // ─── Simulation Mode ────────────────────────────────────────────────────────
@@ -472,6 +512,7 @@ class ProcessManager extends EventEmitter {
           await updateExecution(execId, { status: "completed", finishedAt: new Date(), totalCompleted: this.stats.totalCompleted, totalErrors: this.stats.totalErrors });
           await insertLog({ executionId: execId, level: "INFO", message: "Simulação concluída com sucesso!" });
           this.emitUpdate();
+          this.emit("batchFinished", { code: 0, execId, status: "completed" });
         }
         return;
       }

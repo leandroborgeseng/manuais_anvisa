@@ -42,6 +42,8 @@ export default function SettingsPage() {
   const [maxWorkers, setMaxWorkers] = useState(4);
   const [cronExpression, setCronExpression] = useState("0 2 1 * *");
   const [b2BucketName, setB2BucketName] = useState("discorailway");
+  const [autoRunEnabled, setAutoRunEnabled] = useState(true);
+  const [autoRunDelayMinutes, setAutoRunDelayMinutes] = useState(10);
 
   useEffect(() => {
     if (settings) {
@@ -49,11 +51,20 @@ export default function SettingsPage() {
       setMaxWorkers(settings.maxWorkers);
       setCronExpression(settings.cronExpression);
       setB2BucketName(settings.b2BucketName);
+      setAutoRunEnabled(settings.autoRunEnabled ?? true);
+      setAutoRunDelayMinutes(settings.autoRunDelayMinutes ?? 10);
     }
   }, [settings]);
 
   const handleSave = () => {
-    updateMutation.mutate({ maxFiles, maxWorkers, cronExpression, b2BucketName });
+    updateMutation.mutate({
+      maxFiles,
+      maxWorkers,
+      cronExpression,
+      b2BucketName,
+      autoRunEnabled,
+      autoRunDelayMinutes,
+    });
   };
 
   // Cron expression presets
@@ -161,6 +172,43 @@ export default function SettingsPage() {
                 </button>
               ))}
             </div>
+          </div>
+        </FieldGroup>
+      </div>
+
+      {/* Automação 24h */}
+      <div className="space-y-4">
+        <h2 className="text-xs text-white/30 uppercase tracking-widest font-semibold">
+          Automação 24 horas
+        </h2>
+
+        <FieldGroup
+          label="Execução automática"
+          description="Ao terminar cada lote, inicia o próximo após a pausa — roda continuamente no Railway"
+        >
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={autoRunEnabled}
+              onChange={(e) => setAutoRunEnabled(e.target.checked)}
+              className="w-4 h-4 accent-pink-500"
+            />
+            <span className="text-sm text-white/80">
+              {autoRunEnabled ? "Ativado — modo autônomo" : "Desativado — só manual"}
+            </span>
+          </label>
+          <div className="flex items-center gap-3 mt-3">
+            <span className="text-xs text-white/40 shrink-0">Pausa entre lotes</span>
+            <input
+              type="number"
+              min={1}
+              max={120}
+              value={autoRunDelayMinutes}
+              onChange={(e) => setAutoRunDelayMinutes(Number(e.target.value))}
+              disabled={!autoRunEnabled}
+              className="glass-card px-3 py-2 text-sm text-white w-20 outline-none border-white/10 disabled:opacity-40"
+            />
+            <span className="text-xs text-white/40">minutos</span>
           </div>
         </FieldGroup>
       </div>

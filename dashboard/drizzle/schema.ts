@@ -1,5 +1,6 @@
 import {
   bigint,
+  boolean,
   integer,
   pgEnum,
   pgTable,
@@ -186,6 +187,8 @@ export const settings = pgTable("settings", {
   maxWorkers: integer("maxWorkers").default(4).notNull(),
   cronExpression: varchar("cronExpression", { length: 128 }).default("0 2 1 * *").notNull(),
   b2BucketName: varchar("b2BucketName", { length: 256 }).default("discorailway").notNull(),
+  autoRunEnabled: boolean("autoRunEnabled").default(true).notNull(),
+  autoRunDelayMinutes: integer("autoRunDelayMinutes").default(10).notNull(),
   updatedAt: timestamp("updatedAt", { mode: "date" })
     .defaultNow()
     .notNull()

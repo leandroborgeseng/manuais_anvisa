@@ -602,7 +602,9 @@ export async function upsertSettings(
       maxFiles: data.maxFiles ?? 10000,
       maxWorkers: data.maxWorkers ?? 4,
       cronExpression: data.cronExpression ?? "0 2 1 * *",
-      b2BucketName: data.b2BucketName ?? "anvisa-manuais",
+      b2BucketName: data.b2BucketName ?? "discorailway",
+      autoRunEnabled: data.autoRunEnabled ?? true,
+      autoRunDelayMinutes: data.autoRunDelayMinutes ?? 10,
     });
   }
 }
